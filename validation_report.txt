@@ -1,0 +1,10 @@
+.......................................                                  [100%]
+39 passed in 8.48s
+
+Native map: 4096x3072, 60 days, 3 operations, doctor pixel-perfect.
+Native city pocket: holds first day and later falls; cityless pocket surrenders.
+Both MP4: H.264, yuv420p, 1920x1440, 10 FPS, 61 frames, 6.1 seconds, faststart; ffprobe checked and FFmpeg decoded without error.
+Ordinary/curved/3840px 4K export checked in automated tests.
+Startup self-check passed on Python 3.12.14. Live Telegram API requires your BOT_TOKEN; dispatcher/upload/owner flow tested with mock transport.
+Source image preserved; demo preparation restores 3164 black boundary pixels, no water changed.
+Visual inspection: native detail, days 20/40/60 and decoded ordinary/curved video frames.

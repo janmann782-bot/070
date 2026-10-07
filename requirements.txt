@@ -1,0 +1,10 @@
+aiogram==3.31.0
+python-dotenv==1.2.4
+numpy>=1.26,<3
+Pillow>=10.4,<13
+opencv-python-headless>=4.10,<6
+scipy>=1.12,<2
+numba>=0.61,<0.69
+scikit-image>=0.24,<0.27
+pytest>=8,<10
+imageio-ffmpeg==0.6.0

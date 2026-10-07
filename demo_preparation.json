@@ -1,0 +1,6 @@
+{
+  "changed_border_pixels": 3164,
+  "source_territory_pixels": 7177149,
+  "water_changed": 0,
+  "rule": "Only opaque exact-black pixels within 3 px of BOTH homeland colors; nearest side, ties kefir. This preprocessing occurs before a new demo, never during simulation."
+}
