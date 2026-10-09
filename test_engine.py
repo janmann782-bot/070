@@ -51,7 +51,8 @@ def test_multiple_lines():
 def test_yogurt_and_simultaneous():
     w=world(); old=w.control.copy()
     simulate(w,{2:line(w.control.shape,[(115,110),(20,110)])},15,45,111)
-    assert ((w.control==2)&(old==1)).sum()>50
+    # After the canon-border fix Yogurtstan cannot occupy homeland Kefirstan.
+    assert ((w.control==2)&(w.homeland==1)).sum()==0
     w=world()
     simulate(w,{1:line(w.control.shape,[(55,95),(220,105)]),2:line(w.control.shape,[(130,105),(20,95)])},20,60,12)
     assert w.battle_age.max()>=2 and w.disputed.any()
