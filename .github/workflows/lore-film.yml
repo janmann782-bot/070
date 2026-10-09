@@ -1,4 +1,4 @@
-name: Aurelia 4K 10FPS map-only MP4
+name: Aurelia 4K Cinematic • 30fps UI 10fps Map
 on:
   push:
     paths: ['.github/workflows/lore-film.yml']
@@ -6,26 +6,41 @@ on:
 jobs:
   render:
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
       - run: pip install -r requirements.txt
-      - name: Render real UHD 3840x2160 10 FPS map-only film
+      - name: Render 4K cinematic video (30 fps overlay, 10 fps front)
         env:
           NUMBA_NUM_THREADS: '2'
           OPENBLAS_NUM_THREADS: '2'
           OMP_NUM_THREADS: '2'
         run: |
-          python -u map_only_4k.py aurelia_yogurtstan_4k_10fps_map.mp4
-          ffprobe -v error -select_streams v:0 -show_entries stream=width,height,r_frame_rate,nb_frames -of default=noprint_wrappers=1 aurelia_yogurtstan_4k_10fps_map.mp4
+          python -u - <<'PY'
+          import json
+          from pathlib import Path
+          from lore_campaign import export_lore
+          from storage import Store
+          path = 'aurelia_yogurtstan_4k_30fps_UI_10fps_MAP.mp4'
+          report = export_lore(
+              Store('ci_render.sqlite3'), 0, path,
+              fps=30, width=3840, map_fps=10,
+              progress=lambda n,t,s: print(f'{n}/{t}: {s}', flush=True) if n % 60 == 0 or n==t else None
+          )
+          assert report['width']==3840 and report['height']==2160
+          assert report['fps']==30 and report['map_fps']==10
+          Path(path+'.json').write_text(json.dumps(report,ensure_ascii=False,indent=2))
+          print(json.dumps(report,ensure_ascii=False),flush=True)
+          PY
+          ffprobe -v error -select_streams v:0 -show_entries stream=width,height,r_frame_rate,nb_frames -of default=noprint_wrappers=1 aurelia_yogurtstan_4k_30fps_UI_10fps_MAP.mp4
       - uses: actions/upload-artifact@v4
         with:
-          name: aurelia-yogurtstan-4k-10fps-map-only
+          name: aurelia-yogurtstan-4k-cinematic-30fps-UI-10fps-map
           path: |
-            aurelia_yogurtstan_4k_10fps_map.mp4
-            aurelia_yogurtstan_4k_10fps_map.mp4.json
+            aurelia_yogurtstan_4k_30fps_UI_10fps_MAP.mp4
+            aurelia_yogurtstan_4k_30fps_UI_10fps_MAP.mp4.json
           compression-level: 0
           retention-days: 30
