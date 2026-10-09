@@ -16,6 +16,8 @@ class World:
     layers: Layers
     start_date: str
     elapsed: int = 0
+    fresh_capture: np.ndarray | None = None
+    meeting_age: np.ndarray | None = None
 
     @classmethod
     def create(cls, rgba, start_date, layers=None):

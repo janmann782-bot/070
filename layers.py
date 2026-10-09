@@ -28,6 +28,7 @@ class Layers:
     roads: np.ndarray | None = None
     terrain_cost: np.ndarray | None = None
     road_distance: np.ndarray | None = None
+    road_mask: np.ndarray | None = None
     road_nodes: np.ndarray | None = None
     city_mask: np.ndarray | None = None
     city_influence: np.ndarray | None = None
@@ -52,6 +53,7 @@ class Layers:
             if np.any(a==0): road=a>32
             else: road=rgb.max(axis=2)>128  # opaque black/white binary mask
         density=cv2.boxFilter(road.astype(np.float32),-1,(11,11),normalize=True)
+        self.road_mask=road
         self.road_nodes=cv2.dilate((road&(density>.28)).astype(np.uint8),cv2.getStructuringElement(cv2.MORPH_ELLIPSE,(15,15))).astype(bool)
         self.road_distance=cv2.distanceTransform((~road).astype(np.uint8), cv2.DIST_L2, cv2.DIST_MASK_PRECISE) if road.any() else np.full(shape, 1e5,np.float32)
         self.city_mask=np.zeros(shape,bool)
@@ -67,5 +69,6 @@ class Layers:
     def movement_cost(self, sl):
         # Roads partly compensate terrain; supply improves continuously near road.
         advantage=np.exp(-self.road_distance[sl]/self.settings['ROAD_FALLOFF'])
-        terrain=1+(self.terrain_cost[sl]-1)*(1-.65*advantage)
+        compensation=.82 if self.settings.get('FRONT_MODEL',1)>=2 else .65
+        terrain=1+(self.terrain_cost[sl]-1)*(1-compensation*advantage)
         return (terrain*(1-(1-self.settings['ROAD_COST'])*advantage)*(1+(self.settings['CITY_COST']-1)*self.city_influence[sl])*(1+.20*self.road_nodes[sl])).astype(np.float32)

@@ -65,3 +65,19 @@ def test_demo_preparation_preserves_water_and_strict_decoder():
     assert np.array_equal(im[water],corrected[water])
     assert report['changed_border_pixels']>100
     assert read_png(png_bytes(corrected)).shape==im.shape
+
+
+def test_postprocessed_png_is_deterministic_visual_only_and_markup_valid():
+    from orders import order_masks
+    w=world(cities=True,roads=True)
+    before=[getattr(w,k).copy() for k in ('control','homeland','disputed')]
+    raw=render(w);graded=render(w,postprocess=True)
+    assert not np.array_equal(raw,graded)
+    assert np.array_equal(graded,render(w,postprocess=True))
+    for key,expected in zip(('control','homeland','disputed'),before):
+        assert np.array_equal(getattr(w,key),expected)
+    assert not any(m.any() for m in order_masks(np.dstack((graded,np.full(graded.shape[:2],255,np.uint8)))).values())
+    masks=validate_markup(markup(graded),graded,(1,))
+    assert set(masks)=={1} and masks[1].any()
+    # Sharp city symbols remain recognizable above the graded map.
+    assert graded[110,150].min()>240

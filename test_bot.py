@@ -5,7 +5,7 @@ from datetime import datetime,timezone
 from aiogram import Bot
 from aiogram.client.session.base import BaseSession
 from aiogram.types import Update,Message,Chat,User,File
-from aiogram.methods import SendMessage,SendDocument,GetFile
+from aiogram.methods import SendMessage,SendDocument,GetFile,EditMessageText
 from bot import WarBot
 from test_storage import store
 from layers import png_bytes
@@ -18,8 +18,8 @@ class FakeTelegram(BaseSession):
     async def make_request(self,bot,method,timeout=None):
         if isinstance(method,GetFile): return File(file_id='file',file_unique_id='unique',file_path='mock.png')
         self.sent.append(method)
-        if isinstance(method,(SendMessage,SendDocument)):
-            return Message(message_id=len(self.sent),date=datetime.now(timezone.utc),chat=Chat(id=method.chat_id,type='private'),text=getattr(method,'text',None))
+        if isinstance(method,(SendMessage,SendDocument,EditMessageText)):
+            return Message(message_id=len(self.sent),date=datetime.now(timezone.utc),chat=Chat(id=method.chat_id,type='private'),text=getattr(method,'text',None)).as_(bot)
         return True
     async def stream_content(self,url,headers=None,timeout=30,chunk_size=65536,raise_for_status=True):
         yield self.upload
@@ -61,5 +61,29 @@ def test_invalid_upload_does_not_consume_pending(store):
         assert 'PNG' in transport.sent[-1].text
         assert store.pending(1) is not None and store.events(1)==[]
         await feed(app,bot,'/cancel'); assert store.pending(1) is None
+        await bot.session.close()
+    asyncio.run(scenario())
+
+
+def test_postprocessed_map_matches_pending_reference_after_effect_toggle(store):
+    import numpy as np
+    from layers import read_png
+    from aiogram.methods import SendDocument
+    async def scenario():
+        transport=FakeTelegram();bot=Bot('123456:abcdefghijklmnopqrstuvwxyzABCDEFGHI',session=transport)
+        app=WarBot(store,owner=7)
+        await feed(app,bot,'/attack kefir 2 45')
+        pending=store.pending(1)
+        assert pending[1]['map_postprocess'] is True
+        reference=read_png(pending[2])[:,:,:3]
+        sent=[m for m in transport.sent if isinstance(m,SendDocument)][-1]
+        assert np.array_equal(read_png(sent.document.data)[:,:,:3],reference)
+        await feed(app,bot,'/effects postprocess off')
+        await feed(app,bot,'/map')
+        sent=[m for m in transport.sent if isinstance(m,SendDocument)][-1]
+        assert np.array_equal(read_png(sent.document.data)[:,:,:3],reference)
+        transport.upload=markup(reference)
+        await feed(app,bot,document=True)
+        assert store.load(1)[0].elapsed==2 and store.pending(1) is None
         await bot.session.close()
     asyncio.run(scenario())

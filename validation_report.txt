@@ -1,10 +1,19 @@
-.......................................                                  [100%]
-39 passed in 8.48s
+61 passed in 24.66s: full automated suite.
 
-Native map: 4096x3072, 60 days, 3 operations, doctor pixel-perfect.
-Native city pocket: holds first day and later falls; cityless pocket surrenders.
-Both MP4: H.264, yuv420p, 1920x1440, 10 FPS, 61 frames, 6.1 seconds, faststart; ffprobe checked and FFmpeg decoded without error.
-Ordinary/curved/3840px 4K export checked in automated tests.
-Startup self-check passed on Python 3.12.14. Live Telegram API requires your BOT_TOKEN; dispatcher/upload/owner flow tested with mock transport.
-Source image preserved; demo preparation restores 3164 black boundary pixels, no water changed.
-Visual inspection: native detail, days 20/40/60 and decoded ordinary/curved video frames.
+Front model 2: nearest useful connected-road selection for long operations; stronger road cost advantage; off-road movement; delayed flanks; variable widths and local tempo; soft objective slowdown.
+New tests: offset/nearest roads, depth versus legacy model, lateral expansion, width variation, curved U-turn, local 7-10px meeting zones only after prolonged combat, battle-age persistence, legacy migration and undo.
+Default wide-zone threshold: 18 continuous meeting days, spatial sector chance 12%, ordinary front 1-2px.
+
+Native 4096x3072 map: new 60-day war, 3 operations, 28.06-27.08.2057. Homeland immutable; water impassable; doctor pixel-perfect.
+Native city pocket held then fell; cityless pocket surrendered. Separate prolonged-meeting fixture produced rare broad grey patches on the real front; this is not an operation from the main movie.
+Normal and curved MP4: H264/yuv420p/faststart, 1920x1440, 10 FPS, 61 frames, 6.1 seconds. ffprobe counts and full FFmpeg decode passed; decoded frames inspected.
+3840px 4K PNG and short 4K MP4 checked. Daily capture masks verified pixel-perfect for all 60 days; fresh colors remain a visual overlay.
+
+Legacy model 1 real-map replay retained its previous control SHA256: 9f47b2db1dafd087714ff2b4aa85de9e8021cafbe8f5bccd90eddb2da81d73f6.
+Next new turn records the model switch in its params; undo also reverses the switch. Existing .env and live SQLite must be preserved.
+
+Progress: one edited Telegram message with coalesced updates, real counters/stages, final 100% only after completion. Mock Telegram integration, failed jobs, deleted status messages and all 3 launchers tested offline.
+Original source image preserved; demo restores exactly 3164 black boundary pixels, no water changed.
+All deliverable source/assets/tests are flat root files. No project cache or export subdirectories.
+
+New model 2 final control SHA256: 50cd43bea1f03349cbb95ee56002d5b794f62d3a8c95d8391faedc2afde730c5

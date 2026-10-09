@@ -23,6 +23,23 @@ class FrontPlan:
     arrival:np.ndarray
     tempo:np.ndarray
     supply:np.ndarray
+    sector_phase:np.ndarray | None = None
+
+
+def road_guidance(road,allowed,along,origin,length,width):
+    """Nearest useful connected road, inside the user's operation corridor only."""
+    road=road&allowed
+    if not road.any():return None
+    n,labels=cv2.connectedComponents(road.astype(np.uint8),8)
+    yy,xx=np.where(road)
+    forward=np.zeros(n,np.float32)
+    np.maximum.at(forward,labels[yy,xx],along[yy,xx])
+    distance=(yy-origin[0])**2+(xx-origin[1])**2
+    useful=(forward[labels[yy,xx]]>min(length*.35,width*.8))&(distance<(width*1.25+12)**2)
+    if not useful.any():return None
+    nearest=int(np.argmin(np.where(useful,distance,np.inf)))
+    selected=labels==labels[yy[nearest],xx[nearest]]
+    return cv2.distanceTransform((~selected).astype(np.uint8),cv2.DIST_L2,cv2.DIST_MASK_PRECISE)
 
 
 def prepare(world, masks, days, width, seed):
@@ -60,6 +77,31 @@ def prepare(world, masks, days, width, seed):
             envelope=(width*.52*(1+.48*noise)).astype(np.float32)
             terrain=world.territory[sl]
             allowed=terrain&(lateral<width*1.55)&(along<length+1)
+            modern=world.layers.settings.get('FRONT_MODEL',1)>=2
+            guide=None;phase_field=None;operation_lateral=lateral;tip_extra=None
+            if modern:
+                # Gradual resistance beyond the objective, avoiding a circular bulb
+                # or a hard straight clipping plane at the line's last segment.
+                tip=np.argwhere(sk&(s>=length-.1))[0]
+                tail=np.argwhere(sk&(s>=max(0,length-max(12,width*.25)))&(s<length-.1))
+                if len(tail):
+                    tangent=tip-tail.mean(axis=0);tangent/=max(np.linalg.norm(tangent),1)
+                    yy,xx=np.ogrid[:sk.shape[0],:sk.shape[1]]
+                    projection=(yy-tip[0])*tangent[0]+(xx-tip[1])*tangent[1]
+                    overshoot=np.maximum(projection-width*.04,0)*(along>=length-.1)
+                    tip_extra=(overshoot**2/max(width*.15,2)).astype(np.float32)
+                guide=road_guidance(world.layers.road_mask[sl],allowed,along,origin,length,width)
+                longness=float(np.clip((length/max(width,1)-1.6)/2,0,1)*np.clip((days-5)/15,0,1))
+                priority=world.layers.settings['ROAD_PRIORITY']*longness
+                if guide is not None:
+                    # Strong pull near the selected road, gentle elsewhere: no teleport
+                    # to detached roads, and water remains absent from allowed.
+                    pull=priority*np.exp(-guide/(width*.55+12))
+                    operation_lateral=((1-pull)*lateral+pull*guide).astype(np.float32)
+                sector=.6*np.sin(along/(width*.65+12)+seed%97)+.4*np.sin(along/(width*.25+6)+seed%31)
+                variation=world.layers.settings['WIDTH_VARIATION']
+                envelope=(width*np.clip(.43*(1+variation*noise+.48*sector),.13,.9)*(1-.2*along/max(length,1))).astype(np.float32)
+                phase_field=(noise*5+sector*1.3).astype(np.float32)
             # No endpoint teleportation: every seed is near the proximal line end.
             seeds=own[sl]&allowed&(along<max(12,min(length*.12,width*.65)))&(lateral<width*.68)
             if not seeds.any(): raise ValueError('Линия не имеет снабжаемого начала на своей земле')
@@ -67,7 +109,14 @@ def prepare(world, masks, days, width, seed):
             cost *= 1+.45*(along/max(length,1))**1.5  # deep advances cost supply
             cost *= 1+np.minimum(world.battle_age[sl],20)*.014
             speed=max(.4,length/days*.86)
-            arrival=propagate(cost.astype(np.float32),allowed,seeds,along,lateral,envelope,length*3.4)/speed
+            arrival=propagate(cost.astype(np.float32),allowed,seeds,along,operation_lateral,envelope,length*3.4)/speed
+            if modern:
+                # Road columns break through first; slower off-road flanks catch up.
+                near=np.exp(-world.layers.road_distance[sl]/18)
+                delay=(operation_lateral/np.maximum(envelope,2))**1.4*(1.2+days*.09)*(1-.7*near)*(.6+.4*along/max(length,1))
+                delay+=(1-near)*(1+days*.11)*along/max(length,1)
+                if tip_extra is not None:delay+=tip_extra/speed
+                arrival+=delay.astype(np.float32);arrival[seeds]=0
             rng=np.random.default_rng(seed+side*997)
             daily=[]; phase=float(rng.uniform(0,6.28)); value=1.0
             for day in range(days):
@@ -76,7 +125,7 @@ def prepare(world, masks, days, width, seed):
                 daily.append(value)
             tempo=np.cumsum(daily,dtype=np.float32)
             supply=(1+.25*np.exp(-world.layers.road_distance[sl]/18)-.15*along/max(length,1)).astype(np.float32)
-            plans.append(FrontPlan(side,sl,arrival,tempo,supply))
+            plans.append(FrontPlan(side,sl,arrival,tempo,supply,phase_field))
     return plans
 
 
@@ -122,23 +171,50 @@ def update_contested(world, collision=None, changed=None):
     fa=a&cv2.dilate(b.astype(np.uint8),K3).astype(bool)
     fb=b&cv2.dilate(a.astype(np.uint8),K3).astype(bool)
     front=fa|fb
+    modern=world.layers.settings.get('FRONT_MODEL',1)>=2
+    meeting=None
+    if modern:
+        if world.meeting_age is None:world.meeting_age=np.zeros_like(world.battle_age)
+        contact=cv2.dilate(front.astype(np.uint8),K3).astype(bool)
+        meeting=contact&collision if collision is not None else np.zeros_like(front)
+        ages=world.meeting_age
+        ages[:]=np.where(meeting,np.minimum(ages.astype(np.uint32)+1,65534),np.maximum(ages.astype(np.int32)-2,0)).astype(np.uint16)
     # City defence and stalled road junctions accumulate only near the contact line.
     hot=front&((world.layers.city_influence>.35)|world.layers.road_nodes)
-    if collision is not None: hot|=collision
+    if collision is not None: hot|=meeting if modern else collision
     if changed is not None:
         moving=cv2.dilate(changed.astype(np.uint8),np.ones((7,7),np.uint8)).astype(bool)
-        hot &= ~moving | (collision if collision is not None else False)
+        hot &= ~moving | (meeting if modern else (collision if collision is not None else False))
     age=world.battle_age
     age[:]=np.where(hot,np.minimum(age.astype(np.uint32)+1,65534),np.maximum(age.astype(np.int32)-2,0)).astype(np.uint16)
     grey=fa.copy()  # exactly one native pixel on ordinary straight front
     grey |= fb&(age>=2)
     # Rare local broad areas, driven by correlated battle history, never whole front.
-    for minimum,radius in [(4,1),(8,2),(14,3),(22,4)]:
+    for minimum,radius in ([(4,1),(10,2)] if modern else [(4,1),(8,2),(14,3),(22,4)]):
         source=front&(age>=minimum)
         if source.any():
             spread=cv2.dilate(source.astype(np.uint8),cv2.getStructuringElement(cv2.MORPH_ELLIPSE,(2*radius+1,)*2)).astype(bool)
             grey |= spread&world.territory
-    if collision is not None: grey |= collision&world.territory
+    if modern:
+        # A saved continuous meeting age, with spatially correlated rare sectors.
+        # Hash 48-px cells; a smooth taper keeps broad zones in local rounded patches.
+        prolonged=front&(world.meeting_age>=world.layers.settings['WIDE_BATTLE_DAYS'])
+        yy,xx=np.where(prolonged)
+        if len(yy):
+            cy,cx=yy//48,xx//48
+            salt=int(world.start_date.replace('-',''))
+            hashed=((cx.astype(np.uint64)*73856093)^(cy.astype(np.uint64)*19349663)^np.uint64(salt))%1009
+            chance=world.layers.settings['WIDE_BATTLE_CHANCE']
+            chance=chance*(1+.7*np.minimum((world.meeting_age[yy,xx]-world.layers.settings['WIDE_BATTLE_DAYS'])/30,1))
+            taper=np.sin(np.pi*((xx%48)+.5)/48)*np.sin(np.pi*((yy%48)+.5)/48)
+            rare=hashed/1009<chance
+            for radius,level in [(3,.22),(4,.7)]:
+                source=np.zeros_like(front);pick=rare&(taper>level)
+                source[yy[pick],xx[pick]]=True
+                if source.any():
+                    grey|=cv2.dilate(source.astype(np.uint8),cv2.getStructuringElement(cv2.MORPH_ELLIPSE,(2*radius+1,)*2)).astype(bool)&world.territory
+        if meeting is not None:grey|=meeting&front
+    elif collision is not None: grey |= collision&world.territory
     world.disputed=grey
 
 
@@ -150,6 +226,7 @@ def simulate(world, masks, days, width, seed, on_day=None):
         x0=min(p.sl[1].start for p in plans); x1=max(p.sl[1].stop for p in plans)
         bounds=(slice(y0,y1),slice(x0,x1))
     for day in range(days):
+        previous_control=world.control.copy()
         collision=np.zeros_like(world.control,bool)
         changed=np.zeros_like(world.control,bool)
         if plans:
@@ -159,10 +236,12 @@ def simulate(world, masks, days, width, seed, on_day=None):
             for p in plans:
                 loc=(slice(p.sl[0].start-y0,p.sl[0].stop-y0),slice(p.sl[1].start-x0,p.sl[1].stop-x0))
                 threshold=p.tempo[day]
+                if p.sector_phase is not None:
+                    threshold=threshold+.8*np.sin(day*.42+p.sector_phase)+.3*np.sin(day*.17+p.sector_phase*.7)
                 claim=np.isfinite(p.arrival)&(p.arrival<=threshold)
                 claim=_reachable(claim,world.control[p.sl],p.side)
                 # arrival is expressed in shared nominal days, tempo moves its clock.
-                time=p.arrival*(day+1)/max(threshold,.01)
+                time=p.arrival*(day+1)/np.maximum(threshold,.01)
                 view=arrival[p.side][loc]
                 better=claim&(time<view)
                 view[better]=time[better]; supply[p.side][loc][better]=p.supply[better]
@@ -174,15 +253,22 @@ def simulate(world, masks, days, width, seed, on_day=None):
             age=world.battle_age[bounds]
             # Prolonged meetings resolve using arrival, supply and incumbent defence.
             score=delta-(supply[1]-supply[2])*.65+np.where(old==1,-.12,.12)
-            resolved=close&(age>=7)
+            modern=world.layers.settings.get('FRONT_MODEL',1)>=2
+            if modern:
+                hold=7+world.layers.city_influence[bounds]*12+world.layers.road_nodes[bounds]*8
+                resolved=close&(age>=hold)&((np.abs(score)>.2)|(age>=60))
+            else:resolved=close&(age>=7)
             takek=k&(~y|((delta<-.0)&~close)|(resolved&(score<0)))
             takey=y&(~k|((delta>=0)&~close)|(resolved&(score>=0)))
             view=world.control[bounds]
             view[takek]=1; view[takey]=2
-            collision[bounds]=close&~resolved
+            collision[bounds]=close if modern else close&~resolved
             changed[bounds]=view!=old
         resolve_pockets(world)
         update_contested(world,collision,changed)
+        # Render-only daily delta, including pockets and recaptured homeland.
+        # Reset every day: never accumulate all gains of a multi-day operation.
+        world.fresh_capture=(world.control!=previous_control)&world.territory
         world.elapsed+=1
         if on_day: on_day(world)
     return world

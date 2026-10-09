@@ -16,7 +16,7 @@ from state import World
 from storage import Store,pack_masks
 from renderer import render
 from exporter import export_video
-from engine import simulate
+from engine import simulate,update_contested
 
 CHAT=-2057
 
@@ -104,6 +104,25 @@ def main():
             assert np.all(pocket_world.control[sl]==1); found=True; break
     assert found; report['native_cityless_pocket_falls']=True
     del pocket_world,cityless,baseline
+    # Separate native-map stress fixture: sustained opposing claims along real contact.
+    # This does not alter the operation log or pretend to be a day from the movie.
+    print('Native prolonged meeting / rare broad grey fixture…',flush=True)
+    stress=World.create(w.background.copy(),'2057-06-28',layers)
+    stress.control=w.control.copy()
+    one=(stress.control==1);two=(stress.control==2);kernel=np.ones((3,3),np.uint8)
+    contact=(one&cv2.dilate(two.astype(np.uint8),kernel).astype(bool))|(two&cv2.dilate(one.astype(np.uint8),kernel).astype(bool))
+    for _ in range(32):update_contested(stress,contact)
+    distance=cv2.distanceTransform((~contact).astype(np.uint8),cv2.DIST_L2,cv2.DIST_MASK_PRECISE)
+    broad=stress.disputed&(distance>2.1)
+    assert broad.any()
+    assert stress.meeting_age.max()==32
+    yy,xx=np.where(broad);cy,cx=int(yy[len(yy)//2]),int(xx[len(xx)//2])
+    crop=render(stress)[max(0,cy-160):cy+160,max(0,cx-180):cx+180]
+    (root/'example_battle_detail.png').write_bytes(png_bytes(crop))
+    report['native_prolonged_meeting_rare_grey']=True
+    report['front_model']=w.layers.settings.get('FRONT_MODEL',1)
+    report['rare_battle_pixels_beyond_2px']=int(broad.sum())
+    del stress,one,two,contact,distance,broad
     for mode,name in [(False,'example.mp4'),(True,'example_curved.mp4')]:
         print('Export',name,flush=True)
         info=export_video(store,CHAT,root/name,10,1920,mode)

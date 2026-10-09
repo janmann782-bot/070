@@ -1,14 +1,17 @@
 import numpy as np
 import cv2
 from PIL import Image, ImageDraw, ImageFont
-from palette import COLORS, CONTESTED
+from palette import COLORS, CONTESTED, FRESH_CAPTURE
 from layers import png_bytes
 import config
 
-def render(world, width=None, date_label=False, stamp=None):
+def render(world, width=None, date_label=False, stamp=None, postprocess=False):
     rgb=world.background[:,:,:3].copy(); territory=world.territory
     for (home,side),color in COLORS.items():
         rgb[(world.homeland==home)&(world.control==side)]=color
+    if world.fresh_capture is not None:
+        for side,color in FRESH_CAPTURE.items():
+            rgb[world.fresh_capture&territory&(world.control==side)]=color
     if world.layers.terrain is not None:
         lum=cv2.cvtColor(world.layers.terrain[:,:,:3],cv2.COLOR_RGB2GRAY).astype(np.float32)
         # Luminance modulation preserves side hue; height remains clearly visible.
@@ -20,7 +23,10 @@ def render(world, width=None, date_label=False, stamp=None):
         rgb=np.rint(rgb*(1-alpha)+city[:,:,:3]*alpha).astype(np.uint8)
     if width is not None and width!=rgb.shape[1]:
         height=round(rgb.shape[0]*width/rgb.shape[1])
-        rgb=cv2.resize(rgb,(width,height),interpolation=cv2.INTER_AREA if width<rgb.shape[1] else cv2.INTER_NEAREST)
+        rgb=cv2.resize(rgb,(width,height),interpolation=cv2.INTER_LANCZOS4 if postprocess else (cv2.INTER_AREA if width<rgb.shape[1] else cv2.INTER_NEAREST))
+    if postprocess:
+        from postprocess import process
+        rgb=process(rgb)
     if date_label or stamp:
         im=Image.fromarray(rgb); draw=ImageDraw.Draw(im)
         size=max(12,round(im.width/100))
@@ -35,7 +41,7 @@ def render(world, width=None, date_label=False, stamp=None):
         rgb=np.array(im)
     return rgb
 
-def to_png(world,width=None,stamp=None): return png_bytes(render(world,width,stamp=stamp))
+def to_png(world,width=None,stamp=None,postprocess=True): return png_bytes(render(world,width,stamp=stamp,postprocess=postprocess))
 
 class Curve:
     """Mild perspective + bow, only after rendering. Fixed output resolution."""

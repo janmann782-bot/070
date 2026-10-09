@@ -15,36 +15,39 @@
     {
       "date": "2057-07-18",
       "days": 20,
-      "kefir": 3487213,
-      "yogurt": 3687837,
-      "kefir_occupation": 225316,
+      "kefir": 3671836,
+      "yogurt": 3498280,
+      "kefir_occupation": 409806,
       "yogurt_occupation": 0,
-      "contested": 5263
+      "contested": 10197
     },
     {
       "date": "2057-08-07",
       "days": 40,
-      "kefir": 3517314,
-      "yogurt": 3654188,
-      "kefir_occupation": 255403,
+      "kefir": 3742173,
+      "yogurt": 3423411,
+      "kefir_occupation": 480124,
       "yogurt_occupation": 0,
-      "contested": 8811
+      "contested": 14729
     },
     {
       "date": "2057-08-27",
       "days": 60,
-      "kefir": 3642780,
-      "yogurt": 3529572,
-      "kefir_occupation": 380869,
+      "kefir": 3919586,
+      "yogurt": 3246627,
+      "kefir_occupation": 657537,
       "yogurt_occupation": 0,
-      "contested": 7961
+      "contested": 14100
     }
   ],
-  "captured_px": 386386,
-  "final_control_sha256": "9f47b2db1dafd087714ff2b4aa85de9e8021cafbe8f5bccd90eddb2da81d73f6",
+  "captured_px": 669259,
+  "final_control_sha256": "50cd43bea1f03349cbb95ee56002d5b794f62d3a8c95d8391faedc2afde730c5",
   "doctor_pixel_perfect": true,
   "native_city_hold_then_fall": true,
   "native_cityless_pocket_falls": true,
+  "native_prolonged_meeting_rare_grey": true,
+  "front_model": 2,
+  "rare_battle_pixels_beyond_2px": 6264,
   "example.mp4": {
     "frames": 61,
     "width": 1920,
@@ -57,5 +60,5 @@
     "height": 1440,
     "date": "2057-08-27"
   },
-  "duration_seconds": 214.28
+  "duration_seconds": 261.74
 }

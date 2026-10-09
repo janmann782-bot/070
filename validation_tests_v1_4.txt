@@ -1,0 +1,11 @@
+........................................................................ [ 90%]
+........                                                                 [100%]
+80 passed in 132.00s (0:02:12)
+
+Final compact layout export/bot checks:
+...............                                                          [100%]
+15 passed in 63.92s (0:01:03)
+
+Final panel-edge UI checks:
+..                                                                       [100%]
+2 passed, 10 deselected in 14.43s

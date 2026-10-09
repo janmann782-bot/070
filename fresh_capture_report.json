@@ -1,0 +1,22 @@
+{
+  "days": 60,
+  "daily_delta_pixel_perfect": true,
+  "control_unchanged": true,
+  "control_sha256": "50cd43bea1f03349cbb95ee56002d5b794f62d3a8c95d8391faedc2afde730c5",
+  "daily_capture_pixels_total": 736023,
+  "videos": {
+    "example.mp4": {
+      "frames": 61,
+      "width": 1920,
+      "height": 1440,
+      "date": "2057-08-27"
+    },
+    "example_curved.mp4": {
+      "frames": 61,
+      "width": 1920,
+      "height": 1440,
+      "date": "2057-08-27"
+    }
+  },
+  "duration_seconds": 37.77
+}

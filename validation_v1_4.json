@@ -1,0 +1,85 @@
+{
+  "version": "1.4.4",
+  "python": "3.12",
+  "unit_tests": "80 passed in 132.00 seconds; current final UI/export/bot subset: 15 passed in 63.92 seconds",
+  "physics_unchanged": {
+    "engine": "a7bb9a0b2e7e771df307ef79104e9978e75c99bd8cf4cd8c6c6c2a4ef4e3a2cb",
+    "geodesic": "b9ce721428ad6cb84a62464a08094c3e939fb3327df02562a726ec1b6805d8ab",
+    "config": "1811cdcaa35f0df79a2ee84e155d3945cfb2addc929d27978d2e791623d0dbef",
+    "layers": "ab1f850fea830621809374da1047fd256d88c1cd7a39cbc471858e3a2e80da8b"
+  },
+  "startup": "run.py starts launcher and explicitly requests BOT_TOKEN when .env is absent",
+  "telegram": "offline dispatcher + mock transport, owner messages/callbacks, command flow; no live bot token used",
+  "visual_review": "Removed the floating stepped box. Only the actual sidebar/map boundary has a 2px mint edge. Compact text positions and capture opacity unchanged. Reviewed PNG. Encoded MP4 frame reviewed: inner outline gone; outer edge clean.",
+  "curved_final_check": "Curved 60-day export decoded fully with ffmpeg; ffprobe verifies H.264/yuv420p/faststart, 1280x720 and 272 frames.",
+  "package_layout": "Every project file directly in root; no child directories",
+  "native_smoke": "Existing verified native 60-day timeline retained. Sidebar repainted from cached per-day metadata onto existing normal/curved map videos. Database SHA256 unchanged; no simulation. All 61 prior control hashes retained. Both new MP4s fully decoded with ffmpeg; H.264/yuv420p/faststart and frame counts verified.",
+  "city_catalog": {
+    "records": 369,
+    "native_size": [
+      4096,
+      3072
+    ],
+    "matched_markers": 278,
+    "total_markers": 345,
+    "matched_captures": 70,
+    "match_tolerance_native_px": 8
+  },
+  "video_verification": {
+    "normal": {
+      "width": 1920,
+      "height": 1080,
+      "frames": 816,
+      "fps": "30/1",
+      "codec": "h264",
+      "format": "yuv420p",
+      "duration": "27.200000",
+      "bytes": 1171790
+    },
+    "curved": {
+      "width": 1280,
+      "height": 720,
+      "frames": 272,
+      "fps": "10/1",
+      "codec": "h264",
+      "format": "yuv420p",
+      "duration": "27.200000",
+      "bytes": 595010
+    }
+  },
+  "ui_review_iteration": {
+    "removed_sidebar_items": [
+      6,
+      7,
+      8,
+      9,
+      10,
+      12
+    ],
+    "remaining": [
+      "brand",
+      "channel",
+      "war title",
+      "date",
+      "day",
+      "recent captures"
+    ],
+    "city_text_transparency": 0.45,
+    "label_background_opacity": 0.45098039215686275,
+    "outline": "2px #A9F38F on actual sidebar/map edge; no inner frame",
+    "row_pitch_at_1920": 64,
+    "content_width_at_1920": 320,
+    "sidebar_width_at_1920": 480
+  },
+  "postprocessing": {
+    "png_maps": true,
+    "video": true,
+    "edge_preserving_smoothing": true,
+    "contrast": true,
+    "saturation": true,
+    "terrain_detail": true,
+    "unsharp": true,
+    "pending_reference_freezes_style": true
+  },
+  "current_ui_tests": "..                                                                       [100%]\n2 passed, 10 deselected in 14.43s"
+}

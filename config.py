@@ -1,4 +1,4 @@
-"""All recognition/physics knobs. Changing physics requires a new session."""
+"""Recognition/physics knobs. Settings and model upgrades are saved in the log."""
 from pathlib import Path
 ROOT = Path(__file__).resolve().parent
 ENGINE_VERSION = '1.0'
@@ -6,8 +6,13 @@ TERRAIN_MODE = 'brightness'  # supplied map: black plains, white mountains
 TERRAIN_MIN = 1.0
 TERRAIN_MAX = 1.7
 TERRAIN_STRENGTH = 0.21
-ROAD_COST = 0.55
-ROAD_FALLOFF = 12.0
+ROAD_COST = 0.38
+ROAD_FALLOFF = 14.0
+FRONT_MODEL = 2  # stored per operation; missing key means historical model 1
+ROAD_PRIORITY = 0.8
+WIDTH_VARIATION = 0.9
+WIDE_BATTLE_DAYS = 18
+WIDE_BATTLE_CHANCE = 0.12
 CITY_COST = 2.6
 CITY_RADIUS = 9.0
 CITY_HOLD_DAYS = 18
@@ -25,5 +30,5 @@ REFERENCE_CHANGED_FRACTION = 0.00005
 REFERENCE_GUARD_PX = 4
 REFERENCE_MAX_COVERAGE = 0.10
 
-PHYSICS_KEYS = ["TERRAIN_MODE","TERRAIN_MIN","TERRAIN_MAX","TERRAIN_STRENGTH","ROAD_COST","ROAD_FALLOFF","CITY_COST","CITY_RADIUS","CITY_HOLD_DAYS"]
+PHYSICS_KEYS = ["TERRAIN_MODE","TERRAIN_MIN","TERRAIN_MAX","TERRAIN_STRENGTH","ROAD_COST","ROAD_FALLOFF","CITY_COST","CITY_RADIUS","CITY_HOLD_DAYS","FRONT_MODEL","ROAD_PRIORITY","WIDTH_VARIATION","WIDE_BATTLE_DAYS","WIDE_BATTLE_CHANCE"]
 def physics(): return {k:globals()[k] for k in PHYSICS_KEYS}

@@ -1,3 +1,11 @@
+# Bothost may autodetect bot.py. Route direct execution to the actual launcher.
+if __name__ == '__main__':
+    import sys
+    sys.dont_write_bytecode = True
+    from run import main as launch
+    launch()
+    raise SystemExit(0)
+
 import asyncio
 import io
 import logging
@@ -8,7 +16,7 @@ from pathlib import Path
 from collections import defaultdict
 from datetime import date
 from aiogram import Bot, Dispatcher, F
-from aiogram.types import Message, BufferedInputFile, FSInputFile
+from aiogram.types import Message, BufferedInputFile, FSInputFile, InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram import BaseMiddleware
 from dotenv import load_dotenv
 import config
@@ -19,6 +27,9 @@ from renderer import render
 from orders import validate_markup,reference_hash
 from exporter import export_video
 from canon import advice
+from progress import TelegramProgress
+from cinematic import export_cinematic, preview
+from visual_settings import settings as visual_settings
 
 HELP='''Аурелия • подневный фронт
 /demo — новая война 28.06.2057, заменяет текущую
@@ -38,6 +49,12 @@ HELP='''Аурелия • подневный фронт
 /export FPS WIDTH — все дни + начальный кадр
 /export4k FPS — ширина 3840
 /exportcurve FPS WIDTH — легкий изгиб готовых кадров
+/exportcinema FPS WIDTH — анимации, UI Isaac, несколько кадров в день
+/rerender FPS WIDTH — повторный cinematic рендер с текущими эффектами
+/preview — кадр нового видеоинтерфейса
+/effects — настройки эффектов кнопками
+/effects seconds_per_day 0.4 — секунды на день (0.1..3)
+/effects crf 18 — качество H.264 (14..26; меньше = качественнее)
 /cancel — отменить ожидание загрузки
 
 Кефирстан: #FF00FF, Йогуртстан: #00FF66
@@ -59,21 +76,62 @@ class WarBot:
         self.workers=asyncio.Semaphore(1)  # large native maps have bounded RAM
         self.dp=Dispatcher()
         self.dp.message.outer_middleware(OwnerGuard(owner))
+        self.dp.callback_query.outer_middleware(OwnerGuard(owner))
         self.dp.message.register(self.command,F.text.startswith('/'))
         self.dp.message.register(self.document,F.document)
         self.dp.message.register(self.photo,F.photo)
+        self.dp.callback_query.register(self.effect_button,F.data.startswith('visual:'))
+
+    @staticmethod
+    def effects_keyboard(value):
+        names=dict(notifications='Названия и события',city_glow='Метки городов',attack_glow='Подсветка наступлений',postprocess='Цвет и резкость',curved='Изгиб карты')
+        rows=[[InlineKeyboardButton(text=f"{'●' if value[key] else '○'} {label}",callback_data='visual:'+key)] for key,label in names.items()]
+        return InlineKeyboardMarkup(inline_keyboard=rows)
+
+    @staticmethod
+    def effects_text(value):
+        return (f"Аурелия • оформление v1.4.4\n{value['seconds_per_day']:g} с/день • CRF {value['crf']}\n"
+                'Кнопки меняют оформление карты и видео.\n'
+                '/effects seconds_per_day 0.4\n/effects crf 18\n'
+                '/preview — проверить кадр\n/rerender 30 1920 — видео с новыми настройками')
+
+    async def effect_button(self,query):
+        if query.message is None:
+            await query.answer();return
+        chat=query.message.chat.id
+        async with self.locks[chat]:
+            key=query.data.partition(':')[2]
+            if key not in ['notifications','city_glow','attack_glow','postprocess','curved']:
+                await query.answer('Неизвестный эффект');return
+            value=await self.work(visual_settings,self.store,chat)
+            value=await self.work(visual_settings,self.store,chat,{key:not value[key]})
+            await query.answer('Настройка сохранена')
+            await query.message.edit_text(self.effects_text(value),reply_markup=self.effects_keyboard(value))
 
     async def work(self,fn,*args,**kwargs):
         async with self.workers: return await asyncio.to_thread(fn,*args,**kwargs)
 
+    async def tracked_work(self,message,title,fn,*args,total=1,unit='дней',**kwargs):
+        async with TelegramProgress(message,title,total,unit) as progress:
+            return await self.work(fn,*args,progress=progress.report,**kwargs)
+
     async def send_map(self,message,width=None):
-        def make():
+        def make(progress=None):
+            progress(0,3,'Загрузка состояния')
             w,revision=self.store.load(message.chat.id)
             pending=self.store.pending(message.chat.id)
             stamp=f'r{revision}'
             if pending and pending[0]=='turn': stamp+=' / '+pending[1]['tag']
-            return png_bytes(render(w,width,stamp=stamp)),w.date.strftime('%d.%m.%Y')
-        data,dt=await self.work(make)
+            progress(1,3,'Рендер политического слоя, рельефа и городов')
+            grade=visual_settings(self.store,message.chat.id)['postprocess']
+            if pending and pending[0]=='turn':
+                grade=pending[1].get('map_postprocess',False)
+            rgb=render(w,width,stamp=stamp,postprocess=grade)
+            progress(2,3,'Кодирование PNG')
+            data=png_bytes(rgb)
+            progress(3,3,'Карта готова к отправке')
+            return data,w.date.strftime('%d.%m.%Y')
+        data,dt=await self.tracked_work(message,'Новая карта',make,total=3,unit='этапов')
         await message.answer_document(BufferedInputFile(data,filename='front_4k.png' if width else 'front.png'),caption=f'{dt} • '+('3840 px, только просмотр' if width else 'Исходный размер. Линии приказов рисуйте поверх этого PNG'))
 
     async def command(self,m:Message):
@@ -88,6 +146,26 @@ class WarBot:
         parts=m.text.split(); cmd=parts[0].split('@')[0].lower(); args=parts[1:]; chat=m.chat.id
         if cmd in ['/start','/help']:
             await m.answer(HELP); return
+        if cmd=='/effects':
+            update=None
+            if args==['reset']:
+                from visual_settings import DEFAULTS
+                update=dict(DEFAULTS)
+            elif args:
+                if len(args)!=2:raise ValueError('/effects PARAM VALUE или /effects reset')
+                key,value=args
+                if key in ['seconds_per_day','crf']:
+                    value=float(value) if key=='seconds_per_day' else int(value)
+                elif value in ['on','off']:
+                    value=value=='on'
+                else:raise ValueError('Значение: on/off; seconds_per_day: 0.1..3; crf: 14..26')
+                update={key:value}
+            value=await self.work(visual_settings,self.store,chat,update)
+            await m.answer(self.effects_text(value),reply_markup=self.effects_keyboard(value));return
+        if cmd=='/preview':
+            if args:raise ValueError('/preview без параметров')
+            rgb=await self.tracked_work(m,'Cinematic preview',preview,self.store,chat,total=3,unit='этапов')
+            await m.answer_document(BufferedInputFile(png_bytes(rgb),filename='aurelia_cinematic_preview.png'),caption='UI v1.4.4 • карта для просмотра. Приказы рисуйте на /map');return
         if cmd=='/cancel':
             await self.work(self.store.cancel,chat); await m.answer('Ожидание загрузки отменено'); return
         if cmd=='/demo':
@@ -122,8 +200,9 @@ class WarBot:
             if not 1<=days<=config.MAX_DAYS or not 2<=width<=config.MAX_WIDTH: raise ValueError('DAYS: 1..1460, WIDTH: 2..1200')
             def pending():
                 w,rev=self.store.load(chat); tag=secrets.token_hex(4)
-                reference=render(w,stamp=f'r{rev} / {tag}')
-                self.store.set_pending(chat,'turn',{'days':days,'width':width,'sides':sides,'seed':secrets.randbits(31),'tag':tag},reference,rev)
+                grade=visual_settings(self.store,chat)['postprocess']
+                reference=render(w,stamp=f'r{rev} / {tag}',postprocess=grade)
+                self.store.set_pending(chat,'turn',{'days':days,'width':width,'sides':sides,'seed':secrets.randbits(31),'tag':tag,'map_postprocess':grade},reference,rev)
             await self.work(pending)
             await m.answer(f'Приказ на {days} дней, масштаб {width} px. Используйте СВЕЖИЙ PNG ниже')
             await self.send_map(m); return
@@ -131,17 +210,14 @@ class WarBot:
             if len(args)!=1: raise ValueError('/wait DAYS')
             days=int(args[0])
             if not 1<=days<=config.MAX_DAYS: raise ValueError('DAYS: 1..1460')
-            await m.answer('Считаю дни, сопротивление окружений и бои…')
-            await self.work(self.store.commit,chat,'turn',{'days':days,'width':20,'seed':0},pack_masks({}))
+            await self.tracked_work(m,'Расчет новых дней',self.store.commit,chat,'turn',{'days':days,'width':20,'seed':0},pack_masks({}),total=days)
             await self.send_map(m); return
         if cmd in ['/map','/map4k']:
             await self.send_map(m,3840 if cmd=='/map4k' else None); return
         if cmd=='/undo':
-            await m.answer('Отменяю последнее событие и переигрываю журнал…')
-            await self.work(self.store.undo,chat); await self.send_map(m); return
+            await self.tracked_work(m,'Отмена и повторный расчет',self.store.undo,chat); await self.send_map(m); return
         if cmd=='/doctor':
-            await m.answer('Проверяю журнал полным повторным расчетом…')
-            same,w=await self.work(self.store.doctor,chat)
+            same,w=await self.tracked_work(m,'Проверка журнала',self.store.doctor,chat)
             await m.answer('Replay совпадает пиксель в пиксель' if same else 'Кеш расходился с журналом и восстановлен. Возьмите свежую /map'); return
         if cmd in ['/status','/layers','/canon']:
             w,_=await self.work(self.store.load,chat)
@@ -154,22 +230,25 @@ class WarBot:
                 if len(args)>1 or (args and args[0] not in ['kefir','yogurt']): raise ValueError('/canon [kefir|yogurt]')
                 await m.answer(advice(w.date,args[0] if args else None))
             return
-        if cmd in ['/export','/export4k','/exportcurve']:
+        if cmd in ['/export','/export4k','/exportcurve','/exportcinema','/rerender']:
             if cmd=='/export4k':
                 if len(args)!=1: raise ValueError('/export4k FPS')
                 fps,width=int(args[0]),3840
             else:
                 if len(args)!=2: raise ValueError(cmd+' FPS WIDTH')
                 fps,width=map(int,args)
-            if not 1<=fps<=60 or not 64<=width<=4096: raise ValueError('FPS: 1..60, WIDTH: 64..4096')
+            cinematic=cmd in ['/exportcinema','/rerender']
+            if not 1<=fps<=60 or not (320 if cinematic else 64)<=width<=4096: raise ValueError('FPS: 1..60, WIDTH: '+('320' if cinematic else '64')+'..4096')
             await self.work(self.store.load,chat)
-            await m.answer('Переигрываю историю и кодирую видео. 1 день = 1 кадр + стартовый кадр…')
             fd,path=tempfile.mkstemp(suffix='.mp4'); os.close(fd)
             try:
-                result=await self.work(export_video,self.store,chat,path,fps,width,cmd=='/exportcurve')
+                if cinematic:
+                    result=await self.tracked_work(m,'Cinematic: кадры и видео',export_cinematic,self.store,chat,path,fps,width,unit='кадров')
+                else:
+                    result=await self.tracked_work(m,'Рендер видео',export_video,self.store,chat,path,fps,width,cmd=='/exportcurve',unit='кадров')
                 if Path(path).stat().st_size>config.MAX_EXPORT_BYTES:
                     raise ValueError('Видео превышает 49 MB. Экспортируйте с меньшей шириной')
-                await m.answer_document(FSInputFile(path,filename='aurelia_curved.mp4' if cmd=='/exportcurve' else 'aurelia.mp4'),caption=f"{result['frames']} кадров • {result['width']}×{result['height']} • {fps} FPS")
+                await m.answer_document(FSInputFile(path,filename='aurelia_cinematic.mp4' if cinematic else ('aurelia_curved.mp4' if cmd=='/exportcurve' else 'aurelia.mp4')),caption=f"{result['frames']} кадров • {result['width']}×{result['height']} • {fps} FPS"+(' • готовая временная линия' if result.get('cached') else ''))
             finally: Path(path).unlink(missing_ok=True)
             return
         raise ValueError('Неизвестная команда. /help')
@@ -197,8 +276,7 @@ class WarBot:
                         masks=validate_markup(data,reference,params['sides'])
                         return pack_masks(masks)
                     payload=await self.work(validate)
-                    await m.answer(f"Считаю {params['days']} дней в исходном разрешении…")
-                    await self.work(self.store.commit,m.chat.id,'turn',{k:params[k] for k in ['days','width','seed']},payload)
+                    await self.tracked_work(m,'Расчет новых кадров войны',self.store.commit,m.chat.id,'turn',{k:params[k] for k in ['days','width','seed']},payload,total=params['days'])
                 await self.send_map(m)
             except (ValueError,OSError) as e: await m.answer(str(e))
             except Exception:

@@ -16,6 +16,8 @@ class MissingSession(ValueError): pass
 
 def pack_world(w):
     buf=io.BytesIO(); arrays={k:getattr(w,k) for k in ['background','homeland','initial_control','control','battle_age','encirclement_age','disputed']}
+    if w.fresh_capture is not None: arrays['fresh_capture']=w.fresh_capture
+    if w.meeting_age is not None: arrays['meeting_age']=w.meeting_age
     for k in ['terrain','cities','roads']:
         layer=getattr(w.layers,k)
         if layer is not None: arrays[k]=layer
@@ -31,6 +33,9 @@ def unpack_world(blob):
         layer=Layers(settings=meta['physics'],**{k:a[k].copy() if k in a else None for k in ['terrain','cities','roads']})
         layer.rebuild(a['control'].shape)
         args={k:a[k].copy() for k in ['background','homeland','initial_control','control','battle_age','encirclement_age','disputed']}
+        # Existing v1/v1.1 sessions remain readable; replay rebuilds the new overlay.
+        args['fresh_capture']=a['fresh_capture'].copy() if 'fresh_capture' in a else None
+        args['meeting_age']=a['meeting_age'].copy() if 'meeting_age' in a else None
     args['homeland'].flags.writeable=False; args['initial_control'].flags.writeable=False
     return World(**args,layers=layer,start_date=meta['start_date'],elapsed=meta['elapsed'])
 
@@ -86,15 +91,32 @@ class Store:
     @staticmethod
     def apply(world,kind,params,payload,on_day=None):
         if kind=='turn':
+            if 'physics' in params:
+                world.layers.settings=dict(params['physics']);world.layers.rebuild(world.control.shape)
             simulate(world,unpack_masks(payload),params['days'],params['width'],params['seed'],on_day)
         elif kind=='layer':
             name=params['name']; data=None if payload is None else read_png(payload,world.control.shape)
             setattr(world.layers,name,data); world.layers.rebuild(world.control.shape)
         else: raise ValueError('Неизвестный тип события')
 
-    def commit(self,chat_id,kind,params,payload=None):
+    def commit(self,chat_id,kind,params,payload=None,progress=None):
+        total=params['days'] if kind=='turn' else 1
+        if progress:progress(0,total,'Загрузка состояния')
         world,revision=self.load(chat_id)
-        self.apply(world,kind,params,payload)
+        if progress:progress(0,total,'Подготовка расчета')
+        # Upgrade only the next NEW turn; old log entries retain their original model.
+        # The settings switch is part of the turn, so undo also undoes the switch.
+        if kind=='turn' and world.layers.settings.get('FRONT_MODEL',1)<2:
+            settings=dict(world.layers.settings)
+            settings.update({key:config.physics()[key] for key in ['FRONT_MODEL','ROAD_PRIORITY','WIDTH_VARIATION','WIDE_BATTLE_DAYS','WIDE_BATTLE_CHANCE','ROAD_COST','ROAD_FALLOFF']})
+            params=dict(params,physics=settings)
+        done=0
+        def day(w):
+            nonlocal done
+            done+=1
+            progress(done,total,f'Рассчитан день {w.date:%d.%m.%Y}')
+        self.apply(world,kind,params,payload,day if progress else None)
+        if progress:progress(total,total,'Сохранение войны')
         blob=pack_world(world)
         with self.connect() as db:
             db.execute('BEGIN IMMEDIATE')
@@ -105,19 +127,30 @@ class Store:
             db.execute('DELETE FROM pending WHERE chat_id=?',(chat_id,))
         return world
 
-    def replay(self,chat_id,on_start=None,on_day=None,omit_last=False):
+    def replay(self,chat_id,on_start=None,on_day=None,omit_last=False,progress=None):
         with self.connect() as db: row=db.execute('SELECT initial FROM sessions WHERE chat_id=?',(chat_id,)).fetchone()
         if not row: raise MissingSession('Нет войны')
+        events=self.events(chat_id)
+        events=events[:-1] if omit_last else events
+        total=sum(p['days'] for k,p,_ in events if k=='turn');done=0
+        if progress:progress(0,total,'Загрузка начального состояния')
         w=unpack_world(row[0])
         if on_start: on_start(w)
-        events=self.events(chat_id)
-        for kind,params,payload in (events[:-1] if omit_last else events): self.apply(w,kind,params,payload,on_day)
+        def day(current):
+            nonlocal done
+            done+=1
+            if on_day:on_day(current)
+            if progress:progress(done,total,f'Переигран день {current.date:%d.%m.%Y}')
+        for kind,params,payload in events:self.apply(w,kind,params,payload,day if on_day or progress else None)
+        if progress:progress(total,total,'Журнал переигран')
         return w
 
-    def undo(self,chat_id):
+    def undo(self,chat_id,progress=None):
         _,revision=self.load(chat_id)
         if not self.events(chat_id): raise ValueError('Журнал пуст')
-        w=self.replay(chat_id,omit_last=True); blob=pack_world(w)
+        w=self.replay(chat_id,omit_last=True,progress=progress)
+        if progress:progress(w.elapsed,w.elapsed,'Сохранение после отмены')
+        blob=pack_world(w)
         with self.connect() as db:
             db.execute('BEGIN IMMEDIATE')
             if db.execute('SELECT revision FROM sessions WHERE chat_id=?',(chat_id,)).fetchone()[0]!=revision: raise ValueError('Сессия изменилась')
@@ -126,14 +159,17 @@ class Store:
             db.execute('DELETE FROM pending WHERE chat_id=?',(chat_id,))
         return w
 
-    def doctor(self,chat_id):
+    def doctor(self,chat_id,progress=None):
         # Does not trust cache: can repair even a corrupt compressed BLOB.
         with self.connect() as db: row=db.execute('SELECT cache,revision FROM sessions WHERE chat_id=?',(chat_id,)).fetchone()
         if not row: raise MissingSession('Нет войны')
-        w=self.replay(chat_id)
+        w=self.replay(chat_id,progress=progress)
+        if progress:progress(w.elapsed,w.elapsed,'Проверка и сохранение кеша')
         try:
             cached=unpack_world(row[0])
             same=cached.elapsed==w.elapsed and cached.start_date==w.start_date and all(np.array_equal(getattr(cached,k),getattr(w,k)) for k in ['background','initial_control','control','homeland','battle_age','encirclement_age','disputed'])
+            same &= np.array_equal(cached.fresh_capture,w.fresh_capture)
+            same &= np.array_equal(cached.meeting_age,w.meeting_age)
             same &= cached.layers.settings==w.layers.settings
             same &= all((getattr(cached.layers,k) is None and getattr(w.layers,k) is None) or (getattr(cached.layers,k) is not None and getattr(w.layers,k) is not None and np.array_equal(getattr(cached.layers,k),getattr(w.layers,k))) for k in ['terrain','cities','roads'])
         except Exception: same=False

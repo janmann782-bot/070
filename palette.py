@@ -3,6 +3,8 @@ KEFIR, YOGURT = 1, 2
 COLORS = {(1,1):(74,0,0), (2,2):(0,19,74), (2,1):(177,40,35), (1,2):(31,82,166)}
 ORDERS = {1:(255,0,255), 2:(0,255,102)}
 CONTESTED = (112,116,122)
+# Visual overlay for the single day on which control changes. Not ownership colors.
+FRESH_CAPTURE = {1:(255,167,164), 2:(118,171,255)}
 NAMES = {1:'Кефирстан', 2:'Йогуртстан'}
 def decode(rgb):
     homeland = np.zeros(rgb.shape[:2], np.uint8)

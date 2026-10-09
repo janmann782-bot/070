@@ -25,6 +25,7 @@ def main():
         print('FFmpeg:',ffmpeg_executable())
         return
     logging.basicConfig(level=logging.INFO,format='%(asctime)s %(levelname)s %(message)s')
+    print('Aurelia: launcher started; loading bot libraries...', flush=True)
     from bot import main as polling
     try: asyncio.run(polling())
     except (ValueError,OSError) as e: print(str(e),file=sys.stderr); sys.exit(1)
