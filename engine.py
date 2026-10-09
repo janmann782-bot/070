@@ -259,12 +259,17 @@ def simulate(world, masks, days, width, seed, on_day=None):
                 resolved=close&(age>=hold)&((np.abs(score)>.2)|(age>=60))
             else:resolved=close&(age>=7)
             takek=k&(~y|((delta<-.0)&~close)|(resolved&(score<0)))
-            takey=y&(~k|((delta>=0)&~close)|(resolved&(score>=0)))
+            # Canon guard: Yogurtstan fights only on its own historical territory.
+            # Applies to all simultaneous and hand-drawn offensives.
+            takey=y&(~k|((delta>=0)&~close)|(resolved&(score>=0)))&(world.homeland[bounds]==2)
             view=world.control[bounds]
             view[takek]=1; view[takey]=2
             collision[bounds]=close if modern else close&~resolved
             changed[bounds]=view!=old
         resolve_pockets(world)
+        # Encirclement resolution must obey the same sovereign border guard.
+        illegal=(world.homeland==1)&(world.control==2)
+        if illegal.any(): world.control[illegal]=1
         update_contested(world,collision,changed)
         # Render-only daily delta, including pockets and recaptured homeland.
         # Reset every day: never accumulate all gains of a multi-day operation.
