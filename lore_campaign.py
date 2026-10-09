@@ -20,6 +20,9 @@ from cinematic_ui import SIDE_COLORS
 from visual_settings import settings as get_settings, validate
 from city_catalog import catalog
 from exporter import ffmpeg_executable
+from campaign_dynamics import (path_lanes, paint_corridor, skirmishes,
+                               apply_skirmishes, siege_centres, apply_sieges,
+                               novomir_hold, disputed_front)
 
 
 START = date(2057, 6, 28)
@@ -111,61 +114,61 @@ class Campaign:
             y0,y1,x0,x1=bounds(self.home.shape,points,width+14)
             points[:,0]-=x0
             points[:,1]-=y0
+            if name == 'Новомир':
+                self.novomir_border = (bx,by)
             self.paths.append((name,date.fromisoformat(arrival),date.fromisoformat(retreat),
-                               width,falloff,cap,(slice(y0,y1),slice(x0,x1)),points))
+                               width,falloff,cap,(slice(y0,y1),slice(x0,x1)),points,
+                               path_lanes(points,width,name)))
         if len(self.paths)<8: raise ValueError('Слишком мало канонных операций сопоставлено с картой')
+        self.skirmish_events = skirmishes(self.paths)
+        self.siege_centres = siege_centres(self.home,self.places)
+        self.novomir_zone = (novomir_hold(self.home,self.places,[self.novomir_border])
+                             if hasattr(self,'novomir_border') else None)
         self.previous=None
         self.recent=[]
         self.current_captures=[]
 
     def at(self, when):
+        """Compute one deterministic date. Calls may be non-sequential or repeated."""
         c=self.world.control
         c[:]=self.home
-        # Bounded simultaneous advances: each sector keeps its own independent clock.
-        for name,arrive,retreat,width,falloff,cap,sl,points in self.paths:
-            start=max(date(2057,7,1),arrive-timedelta(days=14)) if arrive.year==2057 else max(date(2058,7,1),arrive-timedelta(days=42))
-            progress=max(0.,min(1.,(when-start).days/max(1,(arrive-start).days)))
-            if when>retreat-timedelta(days=falloff):
-                progress*=max(0.,min(1.,(retreat-when).days/max(1,falloff)))
-            progress*=cap
-            if progress<=0:continue
-            # Subdivide the meandering route so advances never teleport to target.
-            line=[]
-            for a,b in zip(points[:-1],points[1:]):
-                for t in np.linspace(0,1,24,endpoint=False):
-                    line.append(np.rint(a+(b-a)*t).astype(np.int32))
-            line.append(points[-1])
-            end=max(2,min(len(line),int(round((len(line)-1)*progress))+1))
-            sub=c[sl]
-            mask=np.zeros(sub.shape,np.uint8)
-            cv2.polylines(mask,[np.asarray(line[:end],np.int32)],False,255,width,cv2.LINE_8)
-            if progress>=.999 and cap>=1:
-                cv2.circle(mask,tuple(map(int,points[-1])),max(3,width//3),255,-1)
-            sub[(mask>0)&(self.home[sl]==2)]=1
-        # Local yogurt counterattacks: only occupied portions of Yogurtstan.
-        for name,stamp,days,radius in RAIDS:
-            d=(when-date.fromisoformat(stamp)).days
-            if not 0<=d<days:continue
-            place=self.places.get(name)
-            if not place:continue
-            x,y=round(place['x']),round(place['y'])
-            r=max(5,int(radius*math.sin(math.pi*(d+1)/(days+1))))
-            y0,y1,x0,x1=bounds(c.shape,[(x,y)],r+2)
-            local=np.zeros((y1-y0,x1-x0),np.uint8)
-            cv2.ellipse(local,(x-x0,y-y0),(r,max(4,r//2)),25,0,360,1,-1)
-            area=c[y0:y1,x0:x1]
-            area[(local>0)&(self.home[y0:y1,x0:x1]==2)]=2
-        # Absolute canonical invariant. In 2060 the independence line is restored.
+        active_battles=np.zeros_like(c,dtype=bool)
+        # Each operation owns three independently moving lanes, with staggered
+        # breakthroughs, pauses and withdrawals. Nothing is a mirrored ping-pong.
+        for name,arrival,retreat,width,falloff,cap,sl,points,lanes in self.paths:
+            paint_corridor(c,self.home,sl,lanes,when,arrival,retreat,
+                           falloff,cap,name,width)
+        # Both sides can make small, separately timed local moves. Reachability
+        # is checked against friendly-held pixels, never invented landings.
+        apply_skirmishes(c,self.home,when,self.skirmish_events,active_battles)
+        # A drawn horseshoe is not an encirclement. The April 2059 rings here
+        # form closed, thick polygons while the surrounded cores hold out.
+        apply_sieges(c,self.home,when,self.siege_centres,active_battles)
+        # The industrial positions near Novomir stay Kefir after the ceasefire.
+        # The city centre remains Yogurtstan's; no Kefir homeland is ceded.
+        if self.novomir_zone is not None and when>=date(2060,6,1):
+            sl,mask=self.novomir_zone
+            sector=c[sl]
+            sector[mask]=1
         c[self.home==1]=1
-        if when>=END:c[:]=self.home
+        if when>=END:
+            c[:]=self.home
+            if self.novomir_zone is not None:
+                sl,mask=self.novomir_zone
+                c[sl][mask]=1
         self.world.elapsed=(when-START).days
-        self.world.disputed[:]=False
-        self.world.fresh_capture=np.zeros_like(c,dtype=bool) if self.previous is None else (c!=self.previous)&(self.home==2)
+        if when>=END:
+            self.world.disputed[:]=False
+        else:
+            self.world.disputed[:]=disputed_front(c,self.home,active_battles)
+        self.world.fresh_capture=(np.zeros_like(c,dtype=bool) if self.previous is None
+                                  else (c!=self.previous)&(self.home==2))
         self.current_captures=[]
         if self.previous is not None:
             for place in self.places.values():
                 x,y=round(place['x']),round(place['y'])
-                if not (0<=y<c.shape[0] and 0<=x<c.shape[1]) or self.home[y,x]!=2:continue
+                if not (0<=y<c.shape[0] and 0<=x<c.shape[1]) or self.home[y,x]!=2:
+                    continue
                 before,after=int(self.previous[y,x]),int(c[y,x])
                 if before in (1,2) and after in (1,2) and before!=after:
                     event=dict(name=place['name'],side=after,x=x,y=y,
