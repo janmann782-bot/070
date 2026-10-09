@@ -1,0 +1,29 @@
+name: Aurelia Frame 239 Preview
+on:
+  push:
+    paths: ['.github/workflows/frame-239.yml']
+  workflow_dispatch:
+jobs:
+  capture:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install -r requirements.txt
+      - name: Reconstruct film frame 239 (4K)
+        env:
+          NUMBA_NUM_THREADS: '2'
+          OPENBLAS_NUM_THREADS: '2'
+        run: python -u extract_frame239.py
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: aurelia-exact-frame-0239-4k
+          path: |
+            aurelia_frame_0239.png
+            aurelia_frame_0239.png.json
+          retention-days: 30
+          if-no-files-found: error
