@@ -8,6 +8,7 @@ from PIL import Image, ImageDraw, ImageFont
 MINT = '#A9F38F'
 WHITE = '#E5EDDF'
 MUTED = '#94A28E'
+SIDE_COLORS = {1: '#FFA7A4', 2: '#76ABFF'}
 ROOT = Path(__file__).resolve().parent
 
 
@@ -61,6 +62,13 @@ class Broadcast:
         mw, mh = round(source.width*ratio), round(source.height*ratio)
         mx, my = x0+(x1-x0-mw)//2, y0+(y1-y0-mh)//2
         im.paste(source.resize((mw, mh), Image.Resampling.LANCZOS), (mx, my))
+        if settings.get('vignette', True):
+            # Optical vignette only on the map, never on crisp HUD typography.
+            yy, xx = np.ogrid[-1:1:complex(mh), -1:1:complex(mw)]
+            edge = np.clip((xx*xx*.85 + yy*yy*.75 - .18) * .22, 0, .23)
+            darken = (255*edge).astype(np.uint8)
+            shade = Image.fromarray(darken, 'L')
+            im.paste('#060A08', (mx,my,mx+mw,my+mh), shade)
         self.actual_map = (mx, my, mw, mh)
         recent = info.get('recent', []) if settings.get('notifications', True) else []
         # The contour belongs to the panel's actual edge next to the map.
@@ -79,11 +87,13 @@ class Broadcast:
         if not recent:
             fitted(d, (80, 385), 'Пока нет', 14, MUTED, False, 320)
         for i, e in enumerate(reversed(recent[-4:])):
-            y = 385+i*64
-            fitted(d, (80, y), e.get('name', 'Без названия'), 22, WHITE, True, 320)
-            side = 'Кефирстан' if e['side']==1 else 'Йогуртстан'
-            detail = f"{side} · {e.get('label', 'день '+str(e.get('day', 0)))}"
-            fitted(d, (80, y+29), detail, 14, MUTED, False, 320)
+            y = 385+i*94
+            color = SIDE_COLORS.get(e.get('side'), MINT)
+            name = e.get('name', 'Без названия')
+            side = 'Кефирстан' if e.get('side') == 1 else 'Йогуртстан'
+            fitted(d, (80, y), name, 23, color, True, 320)
+            fitted(d, (80, y+30), 'перешёл под контроль', 16, WHITE, True, 320)
+            fitted(d, (80, y+53), side, 19, color, True, 320)
         if settings.get('notifications', True) or settings.get('city_glow', True):
             self._events(im, events, now, settings, info.get('source_size', source.size))
         result = im if self.width == 1920 else im.resize((self.width, self.height), Image.Resampling.LANCZOS)
@@ -104,7 +114,8 @@ class Broadcast:
             if settings.get('city_glow', True):
                 pulse = .82+.18*math.cos(age*math.tau)
                 d.rectangle((x-4,y-4,x+4,y+4), fill=(7,11,8,int(230*alpha)))
-                d.rectangle((x-3,y-3,x+3,y+3), outline=(169,243,143,int(255*alpha*pulse)), width=2)
+                rgb = tuple(bytes.fromhex(SIDE_COLORS.get(e.get('side'), MINT)[1:]))
+                d.rectangle((x-3,y-3,x+3,y+3), outline=(*rgb,int(255*alpha*pulse)), width=2)
             if not settings.get('notifications', True):
                 continue
             name = e.get('name', 'Без названия')
@@ -135,5 +146,6 @@ class Broadcast:
             # 45% opaque backdrop; text keeps its full contrast during the hold.
             d.rectangle(box,fill=(7,11,8,int(115*alpha)))
             # PIL's anchor normalizes the supplied font's unusual ascender metrics.
-            d.text((px+7,py+6),label,font=face,fill=(169,243,143,opacity),anchor='lt')
+            rgb = tuple(bytes.fromhex(SIDE_COLORS.get(e.get('side'), MINT)[1:]))
+            d.text((px+7,py+6),label,font=face,fill=(*rgb,opacity),anchor='lt')
         im.paste(layer,(0,0),layer)
