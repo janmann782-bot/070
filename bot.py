@@ -55,7 +55,7 @@ HELP='''Аурелия • подневный фронт
 /preview — кадр нового видеоинтерфейса
 /lorepreview — кадр канонной войны в конце 2058
 /lore4k — 3840×2160, 30 FPS UI и 10 FPS карта
-/lorewar [FPS WIDTH] — отдельный фильм 2057–2060 по лору
+/lorewar [FPS WIDTH] — фильм 2057–2060; при 30 FPS 4K карта обновляется в 10 FPS
 /effects — настройки эффектов кнопками
 /effects seconds_per_day 0.4 — секунды на день (0.1..3)
 /effects crf 18 — качество H.264 (14..26; меньше = качественнее)
@@ -195,7 +195,7 @@ class WarBot:
             fps,width=map(int,args) if args else (24,1280)
             fd,path=tempfile.mkstemp(suffix='.mp4');os.close(fd)
             try:
-                result=await self.tracked_work(m,'Йогуртстанская война • канон',export_lore,self.store,chat,path,fps,width,unit='кадров')
+                result=await self.tracked_work(m,'Йогуртстанская война • канон',export_lore,self.store,chat,path,fps,width,unit='кадров',map_fps=(10 if width>=3840 and fps%10==0 else None))
                 if Path(path).stat().st_size>config.MAX_EXPORT_BYTES:
                     raise ValueError('Фильм больше 49 MB; попробуйте /lorewar 20 960')
                 await m.answer_document(FSInputFile(path,filename='aurelia_yogurtstan_war_2057_2060.mp4'),
