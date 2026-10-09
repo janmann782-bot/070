@@ -131,7 +131,8 @@ def prepare(world, masks, days, width, seed):
 
 def _reachable(local_mask, old, side):
     # Claims must retain a connected route from current territory; lost supply cuts advances.
-    n,labels=cv2.connectedComponents(local_mask.astype(np.uint8),8)
+    # Corner-only contact is not a supply corridor: the territory must share an edge.
+    n,labels=cv2.connectedComponents(local_mask.astype(np.uint8),4)
     roots=np.unique(labels[(old==side)&local_mask]); roots=roots[roots!=0]
     return np.isin(labels,roots) if len(roots) else np.zeros_like(local_mask)
 
@@ -140,7 +141,8 @@ def resolve_pockets(world):
     c=world.control; previous=world.encirclement_age
     new_age=np.zeros_like(previous)
     for side in (1,2):
-        n,labels,stats,_=cv2.connectedComponentsWithStats((c==side).astype(np.uint8),8)
+        # A one-pixel diagonal touch cannot keep a pocket supplied forever.
+        n,labels,stats,_=cv2.connectedComponentsWithStats((c==side).astype(np.uint8),4)
         if n<=2: continue
         main=1+int(np.argmax(stats[1:,cv2.CC_STAT_AREA]))
         for lab in range(1,n):
