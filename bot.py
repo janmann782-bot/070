@@ -30,6 +30,7 @@ from canon import advice
 from progress import TelegramProgress
 from cinematic import export_cinematic, preview
 from lore_campaign import export_lore, preview_lore
+from map_only_4k import export as export_map_only_4k, dates as lore_map_dates
 from visual_settings import settings as visual_settings
 
 HELP='''Аурелия • подневный фронт
@@ -54,6 +55,7 @@ HELP='''Аурелия • подневный фронт
 /rerender FPS WIDTH — повторный cinematic рендер с текущими эффектами
 /preview — кадр нового видеоинтерфейса
 /lorepreview — кадр канонной войны в конце 2058
+/loremap4k — MP4 3840×2160, 10 FPS, только карта, без UI
 /lorewar [FPS WIDTH] — отдельный фильм 2057–2060 по лору
 /effects — настройки эффектов кнопками
 /effects seconds_per_day 0.4 — секунды на день (0.1..3)
@@ -174,6 +176,20 @@ class WarBot:
             rgb=await self.tracked_work(m,'Превью канонной войны',preview_lore,self.store,chat,total=3,unit='этапов')
             await m.answer_document(BufferedInputFile(png_bytes(rgb),filename='aurelia_lore_preview.png'),
                                     caption='Йогуртстанская война • 31.12.2058 • историческая визуализация');return
+        if cmd=='/loremap4k':
+            if args:raise ValueError('/loremap4k без параметров; 3840×2160, 10 FPS')
+            fd,path=tempfile.mkstemp(suffix='.mp4');os.close(fd)
+            try:
+                result=await self.tracked_work(
+                    m,'4K • карта войны • 10 FPS',export_map_only_4k,path,
+                    total=len(lore_map_dates()),unit='кадров')
+                if Path(path).stat().st_size>config.MAX_EXPORT_BYTES:
+                    raise ValueError('MP4 больше 49 MB для обычного Bot API. Загрузите 4K видео из GitHub Actions → Artifacts')
+                await m.answer_document(
+                    FSInputFile(path,filename='aurelia_yogurtstan_4k_10fps_map.mp4'),
+                    caption=f"Йогуртстанская война • 3840×2160 • 10 FPS • {result['frames']} кадров • только карта")
+            finally: Path(path).unlink(missing_ok=True)
+            return
         if cmd=='/lorewar':
             if len(args) not in (0,2):raise ValueError('/lorewar [FPS WIDTH] (например /lorewar 24 1280)')
             fps,width=map(int,args) if args else (24,1280)
