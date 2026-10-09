@@ -235,3 +235,16 @@ def export_lore(store,chat_id,path,fps=24,width=1280,progress=None):
         if proc is not None and proc.poll() is None:proc.kill();proc.wait()
         Path(path).unlink(missing_ok=True)
         raise
+
+
+def preview_lore(store,chat_id,progress=None):
+    if progress:progress(0,3,'Загрузка канонной карты')
+    world=load_world()
+    campaign=Campaign(world)
+    info=campaign.at(date(2058,12,31))
+    if progress:progress(1,3,'Нанесение участков фронта')
+    options=validate(get_settings(store,chat_id))
+    shot=Shot(world,info,options,1920)
+    image=shot.frame(0,[],1,1920,1080)
+    if progress:progress(3,3,'Снимок готов')
+    return image
