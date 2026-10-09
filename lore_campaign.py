@@ -194,15 +194,25 @@ def dates():
     return sorted(d for d in stamps if START<=d<=END)
 
 
-def export_lore(store,chat_id,path,fps=24,width=1280,progress=None):
-    if not 12<=fps<=60 or not 640<=width<=1920:
-        raise ValueError('FPS: 12..60, WIDTH: 640..1920')
+def export_lore(store,chat_id,path,fps=24,width=1280,progress=None,map_fps=None):
+    """Render full UI at fps; terrain/control updates at at most map_fps.
+
+    In the cinematic 4K mode the UI and fading capture labels run at 30 FPS,
+    while the underlying political map gets a new state at exactly 10 tick
+    opportunities per second (every third output frame). No interpolation
+    changes the national borders or historical timeline.
+    """
+    if not 10<=fps<=60 or not 640<=width<=4096:
+        raise ValueError('FPS: 10..60, WIDTH: 640..4096')
+    if map_fps is not None and (not isinstance(map_fps,int) or map_fps<1 or fps%map_fps):
+        raise ValueError('FPS итогового видео должен делиться на FPS карты без остатка')
     width=width//2*2
     height=round(width*9/16)//2*2
     opts=validate(get_settings(store,chat_id))
     world=load_world()
     campaign=Campaign(world)
     frames_per_scene=max(2,round(fps*.20))
+    ticks_between_maps=fps//map_fps if map_fps else frames_per_scene
     moments=dates()
     total=len(moments)*frames_per_scene
     ffmpeg=[ffmpeg_executable(),'-hide_banner','-loglevel','error','-y',
@@ -212,30 +222,42 @@ def export_lore(store,chat_id,path,fps=24,width=1280,progress=None):
             '-pix_fmt','yuv420p','-movflags','+faststart',str(path)]
     proc=None
     written=0
+    map_updates=0
     try:
         proc=subprocess.Popen(ffmpeg,stdin=subprocess.PIPE,stderr=subprocess.PIPE)
         event_queue=[]
+        shot=None
         for scene,dt in enumerate(moments):
-            info=campaign.at(dt)
-            now=written/fps
-            event_queue=[e for e in event_queue if now-e['time']<2.2]
-            event_queue.extend(dict(e,time=now) for e in info['captures'][-6:])
-            shot=Shot(world,info,opts,width)
+            next_date=moments[min(scene+1,len(moments)-1)]
             for k in range(frames_per_scene):
-                frame=shot.frame(written/fps,event_queue,k/max(1,frames_per_scene-1),width,height)
-                proc.stdin.write(frame.tobytes())
+                if shot is None or written%ticks_between_maps==0:
+                    # Use calendar interpolation for the sparse cinematic
+                    # keyframes, but never invent sub-pixel diplomatic borders.
+                    days=(next_date-dt).days
+                    when=dt+timedelta(days=min(days,round(days*k/frames_per_scene)))
+                    info=campaign.at(when)
+                    event_queue[:]=[e for e in event_queue if written/fps-e['time']<2.2]
+                    event_queue.extend(dict(e,time=written/fps) for e in info['captures'][-6:])
+                    shot=Shot(world,info,opts,width)
+                    map_updates+=1
+                phase=(written%ticks_between_maps)/max(1,ticks_between_maps-1)
+                frame=shot.frame(written/fps,event_queue,phase,width,height)
+                try:
+                    proc.stdin.write(frame.tobytes())
+                except BrokenPipeError:
+                    raise ValueError('FFmpeg: '+proc.stderr.read().decode(errors='replace')[-1000:])
                 written+=1
             if progress:progress(written,total,'Канонная карта: '+dt.strftime('%d.%m.%Y'))
         proc.stdin.close()
         err=proc.stderr.read().decode(errors='replace')
         if proc.wait():raise ValueError('FFmpeg: '+err[-1200:])
         return dict(frames=written,width=width,height=height,days=(END-START).days,
-                    duration=written/fps)
+                    duration=written/fps,fps=fps,map_fps=map_fps or fps,
+                    map_updates=map_updates,ui_fps=fps)
     except BaseException:
         if proc is not None and proc.poll() is None:proc.kill();proc.wait()
         Path(path).unlink(missing_ok=True)
         raise
-
 
 def preview_lore(store,chat_id,progress=None):
     if progress:progress(0,3,'Загрузка канонной карты')
