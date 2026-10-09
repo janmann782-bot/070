@@ -116,19 +116,19 @@ class Campaign:
         if len(self.paths)<8: raise ValueError('Слишком мало канонных операций сопоставлено с картой')
         self.previous=None
         self.recent=[]
+        self.current_captures=[]
 
     def at(self, when):
         c=self.world.control
         c[:]=self.home
         # Bounded simultaneous advances: each sector keeps its own independent clock.
         for name,arrive,retreat,width,falloff,cap,sl,points in self.paths:
-            start=arrive-timedelta(days=14 if arrive.year==2057 else 42)
+            start=max(date(2057,7,1),arrive-timedelta(days=14)) if arrive.year==2057 else max(date(2058,7,1),arrive-timedelta(days=42))
             progress=max(0.,min(1.,(when-start).days/max(1,(arrive-start).days)))
             if when>retreat-timedelta(days=falloff):
                 progress*=max(0.,min(1.,(retreat-when).days/max(1,falloff)))
             progress*=cap
             if progress<=0:continue
-            partial=np.empty((0,2),np.int32)
             # Subdivide the meandering route so advances never teleport to target.
             line=[]
             for a,b in zip(points[:-1],points[1:]):
@@ -161,19 +161,22 @@ class Campaign:
         self.world.elapsed=(when-START).days
         self.world.disputed[:]=False
         self.world.fresh_capture=np.zeros_like(c,dtype=bool) if self.previous is None else (c!=self.previous)&(self.home==2)
+        self.current_captures=[]
         if self.previous is not None:
             for place in self.places.values():
                 x,y=round(place['x']),round(place['y'])
                 if not (0<=y<c.shape[0] and 0<=x<c.shape[1]) or self.home[y,x]!=2:continue
                 before,after=int(self.previous[y,x]),int(c[y,x])
                 if before in (1,2) and after in (1,2) and before!=after:
-                    self.recent.append(dict(name=place['name'],side=after,x=x,y=y,
-                                            day=self.world.elapsed,label=when.strftime('%d.%m.%Y')))
+                    event=dict(name=place['name'],side=after,x=x,y=y,
+                               day=self.world.elapsed,label=when.strftime('%d.%m.%Y'))
+                    self.current_captures.append(event)
+                    self.recent.append(event)
         self.recent=self.recent[-4:]
         self.previous=c.copy()
         return dict(label=when.strftime('%d.%m.%Y'),days=self.world.elapsed,
                     source_size=(c.shape[1],c.shape[0]),recent=list(self.recent),
-                    captures=[],stats=self.world.stats())
+                    captures=list(self.current_captures),stats=self.world.stats())
 
 
 def dates():
@@ -211,11 +214,15 @@ def export_lore(store,chat_id,path,fps=24,width=1280,progress=None):
     written=0
     try:
         proc=subprocess.Popen(ffmpeg,stdin=subprocess.PIPE,stderr=subprocess.PIPE)
+        event_queue=[]
         for scene,dt in enumerate(moments):
             info=campaign.at(dt)
+            now=written/fps
+            event_queue=[e for e in event_queue if now-e['time']<2.2]
+            event_queue.extend(dict(e,time=now) for e in info['captures'][-6:])
             shot=Shot(world,info,opts,width)
             for k in range(frames_per_scene):
-                frame=shot.frame(written/fps,[],k/max(1,frames_per_scene-1),width,height)
+                frame=shot.frame(written/fps,event_queue,k/max(1,frames_per_scene-1),width,height)
                 proc.stdin.write(frame.tobytes())
                 written+=1
             if progress:progress(written,total,'Канонная карта: '+dt.strftime('%d.%m.%Y'))
