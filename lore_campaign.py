@@ -1,0 +1,230 @@
+"""Lore-grounded standalone campaign film. Does not overwrite interactive saves.
+
+A bounded sequence of geographically constrained local fronts, not an invented
+chronological list of exact village captures. Canon anchors are documented below.
+"""
+from datetime import date, timedelta
+from pathlib import Path
+import math
+import subprocess
+
+import cv2
+import numpy as np
+
+import config
+from state import World
+from layers import Layers, read_png
+from renderer import render
+from cinematic import Shot
+from cinematic_ui import SIDE_COLORS
+from visual_settings import settings as get_settings, validate
+from city_catalog import catalog
+from exporter import ffmpeg_executable
+
+
+START = date(2057, 6, 28)
+END = date(2060, 11, 12)
+# Name, canonical-or-approximate endpoint, withdrawal anchor, corridor width,
+# withdraw days, fraction (sub-1 = attempt / siege, not capture).
+# Only explicitly documented canonical dates are exact; other dates mark
+# cinematographic interpolation and MUST NOT be presented as new lore.
+OPERATIONS = [
+    ('Новомост', '2057-07-03', '2060-09-25', 53, 215, 1.0),
+    ('Йогуртград', '2057-07-06', '2059-09-30', 54, 205, 1.0),
+    ('Новомир', '2057-07-05', '2060-11-12', 43, 165, 1.0),
+    ('Йогуртсавск', '2057-07-10', '2059-09-30', 42, 205, .87),
+    ('Старовир', '2057-07-18', '2060-11-12', 48, 155, 1.0),
+    ('Великий Йогурт', '2057-07-23', '2059-09-30', 38, 190, 1.0),
+    ('Кукарекун', '2057-08-22', '2059-09-30', 23, 150, 1.0),
+    ('Нижний Златозерь', '2057-11-22', '2059-09-30', 41, 185, .68),
+    ('Свитлодолир', '2058-11-05', '2059-12-31', 49, 125, .88),
+    ('Двуречье', '2058-11-19', '2059-04-04', 38, 70, 1.0),
+    ('Дестар', '2058-12-28', '2059-04-04', 57, 52, .80),
+    ('Йогуртск', '2058-12-31', '2059-04-04', 65, 60, .77),
+]
+# Small yogurt counter-actions occur even during kefir advances.
+# These are indicative localized motion for cinematic continuity.
+RAIDS = [
+    ('Новомост', '2057-08-08', 13, 36),
+    ('Кукарекун', '2057-08-18', 5, 24),
+    ('Йогуртград', '2058-01-11', 7, 43),
+    ('Йогуртсавск', '2058-05-12', 10, 46),
+    ('Свитлодолир', '2058-08-18', 8, 52),
+    ('Йогуртск', '2059-04-04', 34, 110),
+    ('Дестар', '2059-04-04', 34, 90),
+]
+
+
+def bounds(shape, points, margin):
+    p = np.asarray(points, dtype=np.int32)
+    return (max(0,int(p[:,1].min())-margin),
+            min(shape[0],int(p[:,1].max())+margin+1),
+            max(0,int(p[:,0].min())-margin),
+            min(shape[1],int(p[:,0].max())+margin+1))
+
+
+def load_world():
+    root = config.ROOT
+    base = read_png((root/'yogurtstan_base_control.png').read_bytes())
+    layers = Layers(**{k:read_png((root/('yogurtstan_'+k+'.png')).read_bytes(),base.shape[:2])
+                       for k in ('terrain','cities','roads')})
+    return World.create(base, START.isoformat(), layers)
+
+
+class Campaign:
+    def __init__(self, world):
+        self.world = world
+        self.home = world.homeland
+        registry = catalog()
+        if registry is None or registry.size != (self.home.shape[1],self.home.shape[0]):
+            raise ValueError('Для канонной кампании нужен совпадающий по размеру settlements.json')
+        self.places = {p['name']:p for p in registry.places}
+        if len(self.places) < 100:
+            raise ValueError('Неполный список населенных пунктов')
+        # Shared border, excluding coastlines and other countries.
+        kefir = (self.home == 1).astype(np.uint8)
+        yg = self.home == 2
+        frontier = cv2.dilate(kefir,np.ones((3,3),np.uint8)).astype(bool)&yg
+        yy,xx=np.nonzero(frontier)
+        if not len(xx): raise ValueError('На карте нет сухопутной границы')
+        from scipy.spatial import cKDTree
+        tree = cKDTree(np.column_stack((xx,yy)))
+        self.paths=[]
+        for name,arrival,retreat,width,falloff,cap in OPERATIONS:
+            place=self.places.get(name)
+            if not place:
+                # Nonexistent labels cannot create fictional town events.
+                continue
+            x,y=round(place['x']),round(place['y'])
+            if self.home[y,x] != 2:
+                continue
+            _,idx=tree.query([x,y])
+            bx,by=int(xx[idx]),int(yy[idx])
+            # Irregular yet continuous land corridor with asymmetric bends.
+            dx,dy=x-bx,y-by
+            seed=sum(ord(c) for c in name)
+            curl=math.sin(seed)*.036
+            points=np.array([(bx,by),
+                             (round(bx+dx*.28-dy*curl),round(by+dy*.28+dx*curl)),
+                             (round(bx+dx*.60+dy*curl),round(by+dy*.60-dx*curl)),
+                             (x,y)],np.int32)
+            y0,y1,x0,x1=bounds(self.home.shape,points,width+14)
+            points[:,0]-=x0
+            points[:,1]-=y0
+            self.paths.append((name,date.fromisoformat(arrival),date.fromisoformat(retreat),
+                               width,falloff,cap,(slice(y0,y1),slice(x0,x1)),points))
+        if len(self.paths)<8: raise ValueError('Слишком мало канонных операций сопоставлено с картой')
+        self.previous=None
+        self.recent=[]
+
+    def at(self, when):
+        c=self.world.control
+        c[:]=self.home
+        # Bounded simultaneous advances: each sector keeps its own independent clock.
+        for name,arrive,retreat,width,falloff,cap,sl,points in self.paths:
+            start=arrive-timedelta(days=14 if arrive.year==2057 else 42)
+            progress=max(0.,min(1.,(when-start).days/max(1,(arrive-start).days)))
+            if when>retreat-timedelta(days=falloff):
+                progress*=max(0.,min(1.,(retreat-when).days/max(1,falloff)))
+            progress*=cap
+            if progress<=0:continue
+            partial=np.empty((0,2),np.int32)
+            # Subdivide the meandering route so advances never teleport to target.
+            line=[]
+            for a,b in zip(points[:-1],points[1:]):
+                for t in np.linspace(0,1,24,endpoint=False):
+                    line.append(np.rint(a+(b-a)*t).astype(np.int32))
+            line.append(points[-1])
+            end=max(2,min(len(line),int(round((len(line)-1)*progress))+1))
+            sub=c[sl]
+            mask=np.zeros(sub.shape,np.uint8)
+            cv2.polylines(mask,[np.asarray(line[:end],np.int32)],False,255,width,cv2.LINE_8)
+            if progress>=.999 and cap>=1:
+                cv2.circle(mask,tuple(map(int,points[-1])),max(3,width//3),255,-1)
+            sub[(mask>0)&(self.home[sl]==2)]=1
+        # Local yogurt counterattacks: only occupied portions of Yogurtstan.
+        for name,stamp,days,radius in RAIDS:
+            d=(when-date.fromisoformat(stamp)).days
+            if not 0<=d<days:continue
+            place=self.places.get(name)
+            if not place:continue
+            x,y=round(place['x']),round(place['y'])
+            r=max(5,int(radius*math.sin(math.pi*(d+1)/(days+1))))
+            y0,y1,x0,x1=bounds(c.shape,[(x,y)],r+2)
+            local=np.zeros((y1-y0,x1-x0),np.uint8)
+            cv2.ellipse(local,(x-x0,y-y0),(r,max(4,r//2)),25,0,360,1,-1)
+            area=c[y0:y1,x0:x1]
+            area[(local>0)&(self.home[y0:y1,x0:x1]==2)]=2
+        # Absolute canonical invariant. In 2060 the independence line is restored.
+        c[self.home==1]=1
+        if when>=END:c[:]=self.home
+        self.world.elapsed=(when-START).days
+        self.world.disputed[:]=False
+        self.world.fresh_capture=np.zeros_like(c,dtype=bool) if self.previous is None else (c!=self.previous)&(self.home==2)
+        if self.previous is not None:
+            for place in self.places.values():
+                x,y=round(place['x']),round(place['y'])
+                if not (0<=y<c.shape[0] and 0<=x<c.shape[1]) or self.home[y,x]!=2:continue
+                before,after=int(self.previous[y,x]),int(c[y,x])
+                if before in (1,2) and after in (1,2) and before!=after:
+                    self.recent.append(dict(name=place['name'],side=after,x=x,y=y,
+                                            day=self.world.elapsed,label=when.strftime('%d.%m.%Y')))
+        self.recent=self.recent[-4:]
+        self.previous=c.copy()
+        return dict(label=when.strftime('%d.%m.%Y'),days=self.world.elapsed,
+                    source_size=(c.shape[1],c.shape[0]),recent=list(self.recent),
+                    captures=[],stats=self.world.stats())
+
+
+def dates():
+    stamps={START,END}
+    for _,arrival,retreat,*_ in OPERATIONS:
+        stamps.add(date.fromisoformat(arrival))
+        stamps.add(date.fromisoformat(retreat))
+    for _,start,days,_ in RAIDS:
+        stamps.add(date.fromisoformat(start))
+        stamps.add(min(END,date.fromisoformat(start)+timedelta(days=days//2)))
+    now=START
+    while now<END:
+        now=min(END,now+timedelta(days=2 if (now-START).days<60 else 6))
+        stamps.add(now)
+    return sorted(d for d in stamps if START<=d<=END)
+
+
+def export_lore(store,chat_id,path,fps=24,width=1280,progress=None):
+    if not 12<=fps<=60 or not 640<=width<=1920:
+        raise ValueError('FPS: 12..60, WIDTH: 640..1920')
+    width=width//2*2
+    height=round(width*9/16)//2*2
+    opts=validate(get_settings(store,chat_id))
+    world=load_world()
+    campaign=Campaign(world)
+    frames_per_scene=max(2,round(fps*.20))
+    moments=dates()
+    total=len(moments)*frames_per_scene
+    ffmpeg=[ffmpeg_executable(),'-hide_banner','-loglevel','error','-y',
+            '-f','rawvideo','-pix_fmt','rgb24','-s',f'{width}x{height}',
+            '-r',str(fps),'-i','pipe:0','-an','-c:v','libx264',
+            '-threads','2','-preset','veryfast','-crf',str(opts['crf']),
+            '-pix_fmt','yuv420p','-movflags','+faststart',str(path)]
+    proc=None
+    written=0
+    try:
+        proc=subprocess.Popen(ffmpeg,stdin=subprocess.PIPE,stderr=subprocess.PIPE)
+        for scene,dt in enumerate(moments):
+            info=campaign.at(dt)
+            shot=Shot(world,info,opts,width)
+            for k in range(frames_per_scene):
+                frame=shot.frame(written/fps,[],k/max(1,frames_per_scene-1),width,height)
+                proc.stdin.write(frame.tobytes())
+                written+=1
+            if progress:progress(written,total,'Канонная карта: '+dt.strftime('%d.%m.%Y'))
+        proc.stdin.close()
+        err=proc.stderr.read().decode(errors='replace')
+        if proc.wait():raise ValueError('FFmpeg: '+err[-1200:])
+        return dict(frames=written,width=width,height=height,days=(END-START).days,
+                    duration=written/fps)
+    except BaseException:
+        if proc is not None and proc.poll() is None:proc.kill();proc.wait()
+        Path(path).unlink(missing_ok=True)
+        raise
