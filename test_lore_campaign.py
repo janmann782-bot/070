@@ -36,7 +36,10 @@ def test_strict_border_and_parallel_fronts(monkeypatch):
     assert np.count_nonzero((world.control==1)&(world.homeland==2))>0
     assert not np.any((world.control==2)&(world.homeland==1))
     campaign.at(date(2060,11,12))
-    assert np.array_equal(world.control,world.homeland)
+    assert not np.any((world.control==2)&(world.homeland==1))
+    assert np.count_nonzero((world.control==1)&(world.homeland==2))>0
+    x=round(campaign.places['Новомир']['x']);y=round(campaign.places['Новомир']['y'])
+    assert world.control[y,x]==2  # Downtown is still Yogurtstan
 
 
 def test_named_capture_events_track_owner(monkeypatch):
@@ -74,7 +77,10 @@ def test_canonical_native_map_assets_and_campaign():
         info=campaign.at(when)
         assert info['label']==when.strftime('%d.%m.%Y')
         assert not np.any((world.control==2)&(world.homeland==1))
-    assert np.array_equal(world.control,world.homeland)
+    assert not np.any((world.control==2)&(world.homeland==1))
+    assert np.count_nonzero((world.control==1)&(world.homeland==2))>0
+    x=round(campaign.places['Новомир']['x']);y=round(campaign.places['Новомир']['y'])
+    assert world.control[y,x]==2
 
 
 def test_4k_mode_keeps_map_10fps_but_ui_30fps(monkeypatch,tmp_path):
