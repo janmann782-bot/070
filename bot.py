@@ -84,7 +84,7 @@ class WarBot:
 
     @staticmethod
     def effects_keyboard(value):
-        names=dict(notifications='Названия и события',city_glow='Метки городов',attack_glow='Подсветка наступлений',postprocess='Цвет и резкость',curved='Изгиб карты')
+        names=dict(notifications='Названия и события',city_glow='Метки городов',attack_glow='Подсветка наступлений',postprocess='Цвет и резкость',vignette='Виньетка',curved='Изгиб карты')
         rows=[[InlineKeyboardButton(text=f"{'●' if value[key] else '○'} {label}",callback_data='visual:'+key)] for key,label in names.items()]
         return InlineKeyboardMarkup(inline_keyboard=rows)
 
@@ -101,7 +101,7 @@ class WarBot:
         chat=query.message.chat.id
         async with self.locks[chat]:
             key=query.data.partition(':')[2]
-            if key not in ['notifications','city_glow','attack_glow','postprocess','curved']:
+            if key not in ['notifications','city_glow','attack_glow','postprocess','vignette','curved']:
                 await query.answer('Неизвестный эффект');return
             value=await self.work(visual_settings,self.store,chat)
             value=await self.work(visual_settings,self.store,chat,{key:not value[key]})
