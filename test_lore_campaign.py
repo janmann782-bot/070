@@ -75,3 +75,37 @@ def test_canonical_native_map_assets_and_campaign():
         assert info['label']==when.strftime('%d.%m.%Y')
         assert not np.any((world.control==2)&(world.homeland==1))
     assert np.array_equal(world.control,world.homeland)
+
+
+def test_4k_mode_keeps_map_10fps_but_ui_30fps(monkeypatch,tmp_path):
+    """A 30 FPS stream holds each political map state for three UI frames."""
+    calls=[]
+    movie_frames=[]
+    class CampaignStub:
+        def __init__(self, world):
+            pass
+        def at(self,when):
+            calls.append(when)
+            return dict(label=when.strftime('%d.%m.%Y'),captures=[],
+                        source_size=(320,220),recent=[])
+    class ShotStub:
+        def __init__(self,world,info,options,width):
+            self.color=len(calls)
+        def frame(self,now,events,phase,width,height):
+            movie_frames.append((self.color,now))
+            return np.full((height,width,3),self.color,dtype=np.uint8)
+    monkeypatch.setattr(lore_campaign,'load_world',lambda:object())
+    monkeypatch.setattr(lore_campaign,'Campaign',CampaignStub)
+    monkeypatch.setattr(lore_campaign,'Shot',ShotStub)
+    monkeypatch.setattr(lore_campaign,'get_settings',lambda *a:{})
+    monkeypatch.setattr(lore_campaign,'dates',lambda:[
+        date(2057,6,28),date(2057,7,4)])
+    path=tmp_path/'split_fps.mp4'
+    report=lore_campaign.export_lore(None,0,path,fps=30,width=640,map_fps=10)
+    assert path.stat().st_size>0
+    assert report['fps']==report['ui_fps']==30
+    assert report['map_fps']==10
+    assert report['frames']==12
+    assert report['map_updates']==4
+    assert [x[0] for x in movie_frames]==[1]*3+[2]*3+[3]*3+[4]*3
+    assert [round(x[1]*30) for x in movie_frames]==list(range(12))
