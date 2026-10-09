@@ -12,7 +12,11 @@ def process(rgb, enabled=True):
     image = (rgb.astype(np.float32)*.7 + smooth.astype(np.float32)*.3)/255
     lum = image@np.array([.2126,.7152,.0722],np.float32)
     image = lum[:,:,None]+(image-lum[:,:,None])*1.05
-    image = (image-.35)*1.055+.35
+    image = (image-.35)*1.075+.35
+    # Restrained broadcast-grade shadows and slightly cooler highlights.
+    image[:,:,0] *= .992
+    image[:,:,1] *= 1.015
+    image[:,:,2] *= 1.026
     # Wide-scale terrain detail and a restrained final unsharp pass.
     broad = cv2.GaussianBlur(lum,(0,0),3.)
     image += np.clip(lum-broad,-.08,.08)[:,:,None]*.15
