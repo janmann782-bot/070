@@ -29,6 +29,7 @@ from exporter import export_video
 from canon import advice
 from progress import TelegramProgress
 from cinematic import export_cinematic, preview
+from lore_campaign import export_lore, preview_lore
 from visual_settings import settings as visual_settings
 
 HELP='''Аурелия • подневный фронт
@@ -52,6 +53,8 @@ HELP='''Аурелия • подневный фронт
 /exportcinema FPS WIDTH — анимации, UI Isaac, несколько кадров в день
 /rerender FPS WIDTH — повторный cinematic рендер с текущими эффектами
 /preview — кадр нового видеоинтерфейса
+/lorepreview — кадр канонной войны в конце 2058
+/lorewar [FPS WIDTH] — отдельный фильм 2057–2060 по лору
 /effects — настройки эффектов кнопками
 /effects seconds_per_day 0.4 — секунды на день (0.1..3)
 /effects crf 18 — качество H.264 (14..26; меньше = качественнее)
@@ -166,6 +169,23 @@ class WarBot:
             if args:raise ValueError('/preview без параметров')
             rgb=await self.tracked_work(m,'Cinematic preview',preview,self.store,chat,total=3,unit='этапов')
             await m.answer_document(BufferedInputFile(png_bytes(rgb),filename='aurelia_cinematic_preview.png'),caption='UI v1.4.4 • карта для просмотра. Приказы рисуйте на /map');return
+        if cmd=='/lorepreview':
+            if args:raise ValueError('/lorepreview без параметров')
+            rgb=await self.tracked_work(m,'Превью канонной войны',preview_lore,self.store,chat,total=3,unit='этапов')
+            await m.answer_document(BufferedInputFile(png_bytes(rgb),filename='aurelia_lore_preview.png'),
+                                    caption='Йогуртстанская война • 31.12.2058 • историческая визуализация');return
+        if cmd=='/lorewar':
+            if len(args) not in (0,2):raise ValueError('/lorewar [FPS WIDTH] (например /lorewar 24 1280)')
+            fps,width=map(int,args) if args else (24,1280)
+            fd,path=tempfile.mkstemp(suffix='.mp4');os.close(fd)
+            try:
+                result=await self.tracked_work(m,'Йогуртстанская война • канон',export_lore,self.store,chat,path,fps,width,unit='кадров')
+                if Path(path).stat().st_size>config.MAX_EXPORT_BYTES:
+                    raise ValueError('Фильм больше 49 MB; попробуйте /lorewar 20 960')
+                await m.answer_document(FSInputFile(path,filename='aurelia_yogurtstan_war_2057_2060.mp4'),
+                    caption=f"2057–2060 • {result['frames']} кадров • {width}×{result['height']} • {fps} FPS\\nЙогуртстан не переходит исходную границу Кефирстана")
+            finally:Path(path).unlink(missing_ok=True)
+            return
         if cmd=='/cancel':
             await self.work(self.store.cancel,chat); await m.answer('Ожидание загрузки отменено'); return
         if cmd=='/demo':
