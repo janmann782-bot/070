@@ -140,9 +140,13 @@ def test_simultaneous_captures_use_mint_names_and_no_map_cards():
     mx,my,mw,mh=ui.actual_map
     for e in events:
         x=round(mx+e['x']/320*mw);y=round(my+e['y']/220*mh)
-        # A compact animated mint marker appears at each actual native coordinate.
-        assert frame[y-3,x-3,1] > frame[y-3,x-3,0]
-        assert frame[y-3,x-3,0] > 60
+        # Control changes use the incoming side's own color, not universal mint.
+        pixel=frame[y-3,x-3]
+        if e['side']==1:
+            assert pixel[0]>pixel[1]
+        else:
+            assert pixel[2]>pixel[0]
+        assert pixel.max()>60
     # No lower-left notification cards or duplicate lower-right map.
     without=ui.compose(rgb,info,events,.5,dict(notifications=False,city_glow=False))
     assert np.array_equal(frame[850:1050,500:900],without[850:1050,500:900])
