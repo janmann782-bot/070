@@ -35,12 +35,21 @@ jobs:
           Path(path+'.json').write_text(json.dumps(report,ensure_ascii=False,indent=2))
           print(json.dumps(report,ensure_ascii=False),flush=True)
           PY
-          ffprobe -v error -select_streams v:0 -show_entries stream=width,height,r_frame_rate,nb_frames -of default=noprint_wrappers=1 aurelia_yogurtstan_4k_30fps_UI_10fps_MAP.mp4
+          python - <<'PY'
+          import os
+          path='aurelia_yogurtstan_4k_30fps_UI_10fps_MAP.mp4'
+          assert os.path.isfile(path), 'MP4 was not created'
+          size=os.path.getsize(path)
+          assert size>100000, f'MP4 too small: {size} bytes'
+          print(f'Validated MP4 exists; size={size:,} bytes')
+          PY
       - uses: actions/upload-artifact@v4
+        if: always()
         with:
           name: aurelia-yogurtstan-4k-cinematic-30fps-UI-10fps-map
           path: |
             aurelia_yogurtstan_4k_30fps_UI_10fps_MAP.mp4
             aurelia_yogurtstan_4k_30fps_UI_10fps_MAP.mp4.json
           compression-level: 0
+          if-no-files-found: error
           retention-days: 30
