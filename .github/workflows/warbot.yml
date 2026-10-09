@@ -2,6 +2,8 @@ name: War Bot tests
 on:
   push:
     branches: [main]
+  pull_request:
+    branches: [main]
   workflow_dispatch:
 jobs:
   test:
@@ -15,6 +17,6 @@ jobs:
       - run: pip install -r requirements.txt pytest
       - run: sudo apt-get update && sudo apt-get install -y ffmpeg
       - run: python -m compileall -q .
-      - run: python -m pytest -q test_lore_campaign.py test_engine.py test_cinematic.py test_city_catalog.py
+      - run: python -m pytest -q test_lore_campaign.py test_campaign_dynamics.py test_engine.py test_front_model.py test_cinematic.py test_city_catalog.py
         env:
           NUMBA_NUM_THREADS: '2'
