@@ -2,7 +2,7 @@
 import json
 
 DEFAULTS = dict(notifications=True, city_glow=True, attack_glow=True,
-               postprocess=True, curved=False, seconds_per_day=.4, crf=18)
+               postprocess=True, vignette=True, curved=False, seconds_per_day=.4, crf=18)
 
 
 def validate(values):
