@@ -55,3 +55,23 @@ def test_scene_calendar_complete():
     assert days[0]==lore_campaign.START and days[-1]==lore_campaign.END
     assert len(days)>150
     assert days==sorted(set(days))
+
+
+def test_canonical_native_map_assets_and_campaign():
+    # Integration check: real 4096x3072 political base, named locations and
+    # the historical battlefield layers must work without relying on a bot token.
+    world=lore_campaign.load_world()
+    assert world.control.shape==(3072,4096)
+    campaign=lore_campaign.Campaign(world)
+    assert len(campaign.paths)>=8
+    for when in (
+        date(2057,6,28),
+        date(2057,7,18),
+        date(2058,12,31),
+        date(2059,4,4),
+        date(2060,11,12),
+    ):
+        info=campaign.at(when)
+        assert info['label']==when.strftime('%d.%m.%Y')
+        assert not np.any((world.control==2)&(world.homeland==1))
+    assert np.array_equal(world.control,world.homeland)
