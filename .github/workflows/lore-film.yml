@@ -1,4 +1,4 @@
-name: Aurelia 2057–2060 Film
+name: Aurelia 4K 10FPS map-only MP4
 on:
   push:
     paths: ['.github/workflows/lore-film.yml']
@@ -6,40 +6,26 @@ on:
 jobs:
   render:
     runs-on: ubuntu-latest
-    timeout-minutes: 40
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
       - run: pip install -r requirements.txt
-      - name: Render canonical cinematic war film
+      - name: Render real UHD 3840x2160 10 FPS map-only film
         env:
           NUMBA_NUM_THREADS: '2'
           OPENBLAS_NUM_THREADS: '2'
+          OMP_NUM_THREADS: '2'
         run: |
-          python - <<'PY'
-          import json
-          from pathlib import Path
-          from storage import Store
-          from lore_campaign import export_lore, load_world, Campaign
-          from datetime import date
-          import numpy as np
-          w=load_world()
-          c=Campaign(w)
-          for day in [date(2057,6,28),date(2057,7,18),date(2058,12,31),date(2059,4,4),date(2060,11,12)]:
-              c.at(day)
-              if np.any((w.control==2)&(w.homeland==1)):
-                  raise ValueError('Йогуртстан перешел границу Кефирстана')
-          result=export_lore(Store('ci_render.sqlite3'),0,
-                             'aurelia_yogurtstan_war_2057_2060.mp4',24,960)
-          Path('aurelia_render_metadata.json').write_text(json.dumps(result,indent=2))
-          print(json.dumps(result,ensure_ascii=False))
-          PY
+          python -u map_only_4k.py aurelia_yogurtstan_4k_10fps_map.mp4
+          ffprobe -v error -select_streams v:0 -show_entries stream=width,height,r_frame_rate,nb_frames -of default=noprint_wrappers=1 aurelia_yogurtstan_4k_10fps_map.mp4
       - uses: actions/upload-artifact@v4
         with:
-          name: aurelia-yogurtstan-war-2057-2060-mp4
+          name: aurelia-yogurtstan-4k-10fps-map-only
           path: |
-            aurelia_yogurtstan_war_2057_2060.mp4
-            aurelia_render_metadata.json
+            aurelia_yogurtstan_4k_10fps_map.mp4
+            aurelia_yogurtstan_4k_10fps_map.mp4.json
+          compression-level: 0
           retention-days: 30
