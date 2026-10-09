@@ -68,7 +68,10 @@ def bounds(shape, points, margin):
 
 def load_world():
     root = config.ROOT
-    base = read_png((root/'yogurtstan_base_control.png').read_bytes())
+    # The raw political artwork contains a thick non-territory outline.
+    # The prepared source restores only 3,164 contact pixels of this outline;
+    # without it the armies have no legal shared land border to advance across.
+    base = read_png((root/'yogurtstan_demo_control.png').read_bytes())
     layers = Layers(**{k:read_png((root/('yogurtstan_'+k+'.png')).read_bytes(),base.shape[:2])
                        for k in ('terrain','cities','roads')})
     return World.create(base, START.isoformat(), layers)
